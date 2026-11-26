@@ -648,7 +648,8 @@ def main() -> int:
 
             dest = san / out_rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(out_text, encoding="utf-8", newline="")
+            with open(dest, "w", encoding="utf-8", newline="") as f:
+                f.write(out_text)
             entry.update(output=f"sanitized/{out_rel}", status="sanitized")
 
         except (ValueError, RecursionError, UnicodeError, csv.Error) as exc:
