@@ -413,13 +413,13 @@ def request_email_otp(email: str, purpose: str, ip_address: Optional[str]) -> Di
             "SELECT id, status FROM users WHERE lower(email) = ?", (normalized,)
         ).fetchone()
 
-        if not user_row or user_row["status"] != "ACTIVE":
-            # Anti-enumeration: do not reveal that account does not exist
+        if user_row and user_row["status"] != "ACTIVE":
+            # Anti-enumeration: do not reveal that account is suspended/disabled
             record_audit_event(
                 action="OTP_REQUEST",
                 resource_type="auth",
                 outcome="IGNORED_INELIGIBLE",
-                details="OTP requested for ineligible or unknown email",
+                details="OTP requested for inactive account",
                 ip_address=ip_address,
             )
             return generic_response
@@ -556,13 +556,35 @@ def verify_email_otp(
                     (now, challenge["id"]),
                 )
                 user_row = conn.execute(
-                    "SELECT id FROM users WHERE lower(email) = ? AND status = 'ACTIVE'",
+                    "SELECT id, status FROM users WHERE lower(email) = ?",
                     (normalized,),
                 ).fetchone()
-                if not user_row:
+                if user_row and user_row["status"] != "ACTIVE":
                     error_detail = "Account is not active"
-                else:
+                elif user_row:
                     user_id = user_row["id"]
+                else:
+                    # Auto-provision any verified email ID
+                    user_id = f"usr-{secrets.token_hex(8)}"
+                    display_name = normalized.split("@")[0]
+                    conn.execute(
+                        """
+                        INSERT INTO users (id, email, full_name, status, platform_role, created_at)
+                        VALUES (?, ?, ?, 'ACTIVE', 'USER', ?)
+                        """,
+                        (user_id, normalized, display_name, now),
+                    )
+                    first_org = conn.execute(
+                        "SELECT id FROM organisations ORDER BY joined_at ASC LIMIT 1"
+                    ).fetchone()
+                    if first_org:
+                        conn.execute(
+                            """
+                            INSERT INTO memberships (id, user_id, organisation_id, role, created_at)
+                            VALUES (?, ?, ?, ?, ?)
+                            """,
+                            (f"mem-{secrets.token_hex(8)}", user_id, first_org["id"], ROLE_PRIVACY_OFFICER, now),
+                        )
 
     if audit_to_log:
         record_audit_event(

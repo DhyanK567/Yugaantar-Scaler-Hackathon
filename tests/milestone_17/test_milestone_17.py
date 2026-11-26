@@ -197,10 +197,31 @@ def test_otp_security_controls(client: TestClient, monkeypatch: pytest.MonkeyPat
     sent: List[str] = []
     monkeypatch.setattr("backend.auth.send_otp_email", lambda to, code, expiry_minutes=5: sent.append(code))
 
-    # Anti-enumeration: unknown email returns same generic 200 without sending
-    r_unknown = client.post("/api/auth/otp/request", json={"email": "nobody@unknown.org"})
-    assert r_unknown.status_code == 200
-    assert r_unknown.json()["message"] == "If this account is eligible, a verification code will be sent."
+    # Any valid email ID can request & verify OTP (auto-provisioned)
+    r_any = client.post("/api/auth/otp/request", json={"email": "newuser@anydomain.com"})
+    assert r_any.status_code == 200
+    assert len(sent) == 1
+    assert re.fullmatch(r"\d{6}", sent[0])
+    r_any_verify = client.post(
+        "/api/auth/otp/verify",
+        json={"email": "newuser@anydomain.com", "code": sent[0]},
+    )
+    assert r_any_verify.status_code == 200
+    assert r_any_verify.json()["user"]["email"] == "newuser@anydomain.com"
+    client.post("/api/auth/logout")
+    sent.clear()
+
+    # Anti-enumeration: suspended account returns same generic 200 without sending
+    from backend.database import get_db
+
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO users (id, email, full_name, status, platform_role, created_at) VALUES ('usr-susp', 'suspended@org.com', 'Suspended', 'SUSPENDED', 'USER', ?)",
+            (time.time(),),
+        )
+    r_susp = client.post("/api/auth/otp/request", json={"email": "suspended@org.com"})
+    assert r_susp.status_code == 200
+    assert r_susp.json()["message"] == "If this account is eligible, a verification code will be sent."
     assert len(sent) == 0
 
     # Valid email sends OTP
