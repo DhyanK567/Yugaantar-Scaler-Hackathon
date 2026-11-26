@@ -1,7 +1,11 @@
 "use client";
+
 import { useEffect, useState } from "react";
 import { api, type Organisation } from "@/lib/api";
-import { Building2, RefreshCw, AlertTriangle } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState, ErrorState, LoadingState } from "@/components/ui/StatePanels";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { RefreshCw } from "lucide-react";
 
 export default function OrganisationsPage() {
   const [orgs, setOrgs] = useState<Organisation[]>([]);
@@ -23,139 +27,65 @@ export default function OrganisationsPage() {
   }, []);
 
   return (
-    <div style={{ padding: "32px 36px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 28 }}>
-        <div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: "#050505", letterSpacing: "-0.8px", marginBottom: 4 }}>
-            Organisations
-          </h1>
-          <p style={{ fontSize: 13.5, color: "#777777" }}>
-            Authorised hospitals, diagnostic laboratories, and research institutions for your account.
-          </p>
-        </div>
-        <button
-          onClick={load}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "8px 14px",
-            background: "#FFFFFF",
-            border: "1.5px solid #DCDCDC",
-            borderRadius: 7,
-            fontSize: 13,
-            fontWeight: 500,
-            color: "#050505",
-            cursor: "pointer",
-          }}
-        >
-          <RefreshCw size={13} />
-          Refresh
-        </button>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="06 · INSTITUTIONAL DIRECTORY"
+        title="Organisations"
+        subtitle="Authorised hospitals, diagnostic laboratories, and research institutions for your account."
+        actions={
+          <button
+            type="button"
+            onClick={load}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-white border border-[#DADADA] text-[13px] font-medium text-[#090909] hover:bg-[#F4F4F2]"
+          >
+            <RefreshCw size={13} />
+            <span>Refresh</span>
+          </button>
+        }
+      />
 
-      {error && (
-        <div
-          style={{
-            padding: "12px 16px",
-            background: "#FFFBF0",
-            border: "1.5px solid #E6D5A0",
-            borderRadius: 8,
-            fontSize: 13,
-            color: "#7A5C00",
-            marginBottom: 20,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
-          <AlertTriangle size={15} />
-          {error}
-        </div>
-      )}
+      {error && <ErrorState message={error} />}
 
       {loading ? (
-        <div style={{ padding: 48, textAlign: "center", color: "#777777", fontSize: 13.5 }}>
-          Loading organisations…
-        </div>
+        <LoadingState label="Loading organisations…" />
       ) : orgs.length === 0 ? (
-        <div
-          style={{
-            background: "#FFFFFF",
-            border: "1.5px solid #DCDCDC",
-            borderRadius: 10,
-            padding: "56px 24px",
-            textAlign: "center",
-            color: "#777777",
-            fontSize: 13.5,
-          }}
-        >
-          No authorised organisations found for your account.
-        </div>
+        <EmptyState
+          title="No authorised organisations"
+          description="Your account does not currently have active organisation memberships."
+        />
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
-          {orgs.map((org) => (
-            <div
-              key={org.id}
-              style={{
-                background: "#FFFFFF",
-                border: "1.5px solid #DCDCDC",
-                borderRadius: 10,
-                padding: "22px 24px",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-                <div
-                  style={{
-                    width: 36,
-                    height: 36,
-                    background: "#F2F2F2",
-                    borderRadius: 8,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Building2 size={17} color="#050505" strokeWidth={1.5} />
-                </div>
-                <span
-                  style={{
-                    padding: "3px 8px",
-                    background: org.status.toLowerCase() === "active" ? "#050505" : "#E6E6E6",
-                    color: org.status.toLowerCase() === "active" ? "#FFFFFF" : "#050505",
-                    borderRadius: 4,
-                    fontSize: 10.5,
-                    fontWeight: 600,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.5px",
-                  }}
-                >
-                  {org.status}
-                </span>
-              </div>
-              <div style={{ fontSize: 16, fontWeight: 600, color: "#050505", marginBottom: 4 }}>
-                {org.name}
-              </div>
-              <div style={{ fontSize: 12.5, color: "#777777", marginBottom: 14 }}>
-                {org.org_type} · {org.region}
-              </div>
-              <div
-                style={{
-                  borderTop: "1px solid #EEEEEE",
-                  paddingTop: 12,
-                  display: "flex",
-                  justifyContent: "space-between",
-                  fontSize: 12,
-                  color: "#555555",
-                }}
-              >
-                <span>Records contributed</span>
-                <strong style={{ color: "#050505" }}>
-                  {org.records_contributed.toLocaleString()}
-                </strong>
-              </div>
-            </div>
-          ))}
+        <div className="bg-white border border-[#DADADA] rounded-2xl overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-[#E5E5E5] bg-[#F4F4F2]/60">
+                  {["Organisation", "Type", "Region", "Status", "Records Contributed", "Joined"].map((h) => (
+                    <th key={h} className="px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.05em] text-[#666666]">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#E5E5E5]">
+                {orgs.map((org) => (
+                  <tr key={org.id} className="hover:bg-[#F4F4F2]/40">
+                    <td className="px-5 py-3.5 text-[13.5px] font-semibold text-[#090909]">{org.name}</td>
+                    <td className="px-5 py-3.5 text-[13px] text-[#666666]">{org.org_type}</td>
+                    <td className="px-5 py-3.5 text-[13px] text-[#666666]">{org.region}</td>
+                    <td className="px-5 py-3.5">
+                      <StatusBadge status={org.status.toLowerCase() === "active" ? "PASS" : org.status} />
+                    </td>
+                    <td className="px-5 py-3.5 text-[13px] font-medium text-[#090909]">
+                      {org.records_contributed.toLocaleString()}
+                    </td>
+                    <td className="px-5 py-3.5 text-[12px] text-[#666666] whitespace-nowrap">
+                      {new Date(org.joined_at * 1000).toLocaleDateString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

@@ -1,4 +1,5 @@
 "use client";
+
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
@@ -74,129 +75,58 @@ export default function LoginPage() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#F2F2F2",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-      }}
-    >
-      <Link href="/" style={{ textDecoration: "none", marginBottom: 32 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <Image
-            src="/medilocker-logo.jpg"
-            alt="MediLocker"
-            width={36}
-            height={36}
-            style={{ borderRadius: "50%" }}
-          />
-          <span
-            style={{
-              fontWeight: 700,
-              fontSize: 18,
-              color: "#050505",
-              letterSpacing: "-0.5px",
-            }}
-          >
-            MediLocker
-          </span>
-        </div>
+    <div className="min-h-screen bg-[#F4F4F2] flex flex-col items-center justify-center p-6">
+      <Link href="/" className="flex items-center gap-2.5 mb-8">
+        <Image
+          src="/medilocker-logo.jpg"
+          alt="MediLocker"
+          width={34}
+          height={34}
+          className="rounded-full"
+        />
+        <span className="font-serif-display text-[22px] text-[#090909]">
+          MediLocker
+        </span>
       </Link>
 
-      <div
-        style={{
-          background: "#FFFFFF",
-          border: "1.5px solid #DCDCDC",
-          borderRadius: 12,
-          padding: "36px 34px",
-          width: "100%",
-          maxWidth: 420,
-        }}
-      >
-        <div style={{ marginBottom: 24 }}>
-          <h1
-            style={{
-              fontSize: 22,
-              fontWeight: 700,
-              color: "#050505",
-              letterSpacing: "-0.5px",
-              marginBottom: 6,
-            }}
-          >
+      <div className="bg-white border border-[#DADADA] rounded-2xl p-8 sm:p-9 w-full max-w-[420px]">
+        <div className="mb-6">
+          <div className="text-[10.5px] font-semibold uppercase tracking-[0.1em] text-[#888888] mb-1.5">
+            ACCESS CONSOLE
+          </div>
+          <h1 className="font-serif-display text-[28px] leading-tight text-[#090909]">
             Sign in to MediLocker
           </h1>
-          <p style={{ fontSize: 13.5, color: "#777777" }}>
+          <p className="text-[13.5px] text-[#666666] mt-1">
             Passwordless healthcare privacy authentication.
           </p>
         </div>
 
         {error && (
-          <div
-            style={{
-              padding: "10px 14px",
-              background: "#FFF5F5",
-              border: "1px solid #FFD5D5",
-              borderRadius: 6,
-              fontSize: 13,
-              color: "#CC3333",
-              marginBottom: 16,
-            }}
-          >
+          <div className="px-3.5 py-2.5 rounded-lg bg-[#FDF2F2] border border-[#E8C5C5] text-[13px] text-[#7F1D1D] mb-4">
             {error}
           </div>
         )}
 
         {info && (
-          <div
-            style={{
-              padding: "10px 14px",
-              background: "#F5F5F5",
-              border: "1px solid #DCDCDC",
-              borderRadius: 6,
-              fontSize: 13,
-              color: "#050505",
-              marginBottom: 16,
-            }}
-          >
+          <div className="px-3.5 py-2.5 rounded-lg bg-[#F4F4F2] border border-[#DADADA] text-[13px] text-[#090909] mb-4">
             {info}
           </div>
         )}
 
         {config?.offline_mode && (
-          <div
-            style={{
-              padding: "12px 14px",
-              background: "#F2F2F2",
-              border: "1.5px solid #050505",
-              borderRadius: 8,
-              marginBottom: 18,
-            }}
-          >
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#050505", marginBottom: 4 }}>
-              Offline Local Demo Mode Active
+          <div className="p-4 rounded-xl bg-[#F4F4F2] border border-[#090909] mb-5">
+            <div className="text-[11.5px] font-semibold uppercase tracking-[0.06em] text-[#090909] mb-1">
+              Offline Local Demo Mode
             </div>
-            <div style={{ fontSize: 12, color: "#555555", marginBottom: 10 }}>
-              Running 100% locally on loopback (127.0.0.1). No internet, SMTP, or Google OAuth required.
-            </div>
+            <p className="text-[12px] text-[#666666] mb-3 leading-relaxed">
+              Running locally on loopback (127.0.0.1). No internet, SMTP, or Google OAuth required.
+            </p>
             <button
               type="button"
               onClick={handleOfflineDemo}
               disabled={loading}
-              style={{
-                width: "100%",
-                padding: "10px 14px",
-                background: "#050505",
-                color: "#FFFFFF",
-                border: "none",
-                borderRadius: 6,
-                fontSize: 13.5,
-                fontWeight: 600,
-                cursor: loading ? "not-allowed" : "pointer",
-              }}
+              className="w-full py-2.5 rounded-lg bg-[#090909] text-white text-[13px] font-medium hover:bg-[#222222] transition-colors disabled:opacity-50"
             >
               Continue in Offline Demo Mode
             </button>
@@ -204,17 +134,9 @@ export default function LoginPage() {
         )}
 
         {step === "email" ? (
-          <form onSubmit={handleRequestOtp}>
-            <div style={{ marginBottom: 16 }}>
-              <label
-                style={{
-                  display: "block",
-                  fontSize: 12.5,
-                  fontWeight: 500,
-                  color: "#050505",
-                  marginBottom: 6,
-                }}
-              >
+          <form onSubmit={handleRequestOtp} className="space-y-4">
+            <div>
+              <label className="block text-[12.5px] font-medium text-[#090909] mb-1.5">
                 Work Email
               </label>
               <input
@@ -223,16 +145,7 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@hospital.org"
                 required
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  border: "1.5px solid #DCDCDC",
-                  borderRadius: 7,
-                  fontSize: 14,
-                  color: "#050505",
-                  background: "#FAFAFA",
-                  outline: "none",
-                }}
+                className="w-full px-3 py-2.5 rounded-lg bg-[#F4F4F2]/60 border border-[#DADADA] text-[14px] text-[#090909] focus:outline-none focus:border-[#090909]"
               />
             </div>
 
@@ -242,51 +155,26 @@ export default function LoginPage() {
                 loading ||
                 (config !== null && !config.smtp_enabled && !config.dev_email_login_enabled)
               }
-              style={{
-                width: "100%",
-                padding: "12px",
-                background:
-                  loading ||
-                  (config !== null && !config.smtp_enabled && !config.dev_email_login_enabled)
-                    ? "#777777"
-                    : "#050505",
-                color: "#FFFFFF",
-                border: "none",
-                borderRadius: 7,
-                fontSize: 14,
-                fontWeight: 600,
-                cursor:
-                  loading ||
-                  (config !== null && !config.smtp_enabled && !config.dev_email_login_enabled)
-                    ? "not-allowed"
-                    : "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 8,
-              }}
+              className="w-full py-2.5 rounded-lg bg-[#090909] text-white text-[13.5px] font-medium hover:bg-[#222222] transition-colors disabled:bg-[#888888] disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               <Mail size={15} />
-              {loading
-                ? "Signing in…"
-                : config && !config.smtp_enabled && config.dev_email_login_enabled
-                ? "Continue with Email"
-                : "Send verification code"}
+              <span>
+                {loading
+                  ? "Signing in…"
+                  : config && !config.smtp_enabled && config.dev_email_login_enabled
+                  ? "Continue with Email"
+                  : "Send verification code"}
+              </span>
             </button>
 
-            {config && !config.smtp_enabled && config.dev_email_login_enabled && (
-              <div style={{ fontSize: 11.5, color: "#666666", marginTop: 8 }}>
-                Local dev mode: SMTP is not configured, so any valid email signs in directly.
-              </div>
-            )}
             {config && !config.smtp_enabled && !config.dev_email_login_enabled && (
-              <div style={{ fontSize: 11.5, color: "#777777", marginTop: 8 }}>
+              <p className="text-[11.5px] text-[#888888]">
                 Email OTP unavailable: SMTP_HOST is not configured on backend.
-              </div>
+              </p>
             )}
           </form>
         ) : (
-          <form onSubmit={handleVerifyOtp}>
+          <form onSubmit={handleVerifyOtp} className="space-y-4">
             <button
               type="button"
               onClick={() => {
@@ -294,33 +182,14 @@ export default function LoginPage() {
                 setCode("");
                 setError("");
               }}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 5,
-                background: "none",
-                border: "none",
-                padding: 0,
-                fontSize: 12.5,
-                color: "#777777",
-                cursor: "pointer",
-                marginBottom: 14,
-              }}
+              className="inline-flex items-center gap-1.5 text-[12.5px] text-[#666666] hover:text-[#090909]"
             >
               <ArrowLeft size={13} />
-              Change email ({email})
+              <span>Change email ({email})</span>
             </button>
 
-            <div style={{ marginBottom: 16 }}>
-              <label
-                style={{
-                  display: "block",
-                  fontSize: 12.5,
-                  fontWeight: 500,
-                  color: "#050505",
-                  marginBottom: 6,
-                }}
-              >
+            <div>
+              <label className="block text-[12.5px] font-medium text-[#090909] mb-1.5">
                 6-Digit Verification Code
               </label>
               <input
@@ -331,133 +200,51 @@ export default function LoginPage() {
                 onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
                 placeholder="123456"
                 required
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  border: "1.5px solid #DCDCDC",
-                  borderRadius: 7,
-                  fontSize: 18,
-                  letterSpacing: "4px",
-                  textAlign: "center",
-                  color: "#050505",
-                  background: "#FAFAFA",
-                  outline: "none",
-                }}
+                className="w-full px-3 py-2.5 rounded-lg bg-[#F4F4F2]/60 border border-[#DADADA] text-[18px] tracking-[0.25em] text-center text-[#090909] focus:outline-none focus:border-[#090909]"
               />
             </div>
 
             <button
               type="submit"
               disabled={loading || code.length !== 6}
-              style={{
-                width: "100%",
-                padding: "12px",
-                background: loading ? "#333333" : "#050505",
-                color: "#FFFFFF",
-                border: "none",
-                borderRadius: 7,
-                fontSize: 14,
-                fontWeight: 600,
-                cursor: loading ? "not-allowed" : "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 8,
-              }}
+              className="w-full py-2.5 rounded-lg bg-[#090909] text-white text-[13.5px] font-medium hover:bg-[#222222] transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >
               <ShieldCheck size={15} />
-              {loading ? "Verifying…" : "Verify & Continue"}
+              <span>{loading ? "Verifying…" : "Verify & Continue"}</span>
             </button>
           </form>
         )}
 
-        {/* Divider */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            margin: "22px 0",
-          }}
-        >
-          <div style={{ flex: 1, height: 1, background: "#E6E6E6" }} />
-          <span style={{ fontSize: 11.5, color: "#777777", textTransform: "uppercase" }}>or</span>
-          <div style={{ flex: 1, height: 1, background: "#E6E6E6" }} />
+        <div className="flex items-center gap-3 my-5">
+          <div className="flex-1 h-px bg-[#E5E5E5]" />
+          <span className="text-[11px] uppercase tracking-wider text-[#888888]">or</span>
+          <div className="flex-1 h-px bg-[#E5E5E5]" />
         </div>
 
-        {/* Official Google Sign-In Button */}
         <button
           type="button"
           onClick={handleGoogleLogin}
           disabled={config !== null && !config.google_enabled}
-          style={{
-            width: "100%",
-            padding: "11px 16px",
-            background: "#FFFFFF",
-            color: config !== null && !config.google_enabled ? "#999999" : "#1F1F1F",
-            border: "1.5px solid #DCDCDC",
-            borderRadius: 7,
-            fontSize: 14,
-            fontWeight: 500,
-            cursor: config !== null && !config.google_enabled ? "not-allowed" : "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 10,
-          }}
+          className="w-full py-2.5 px-4 rounded-lg bg-white border border-[#DADADA] text-[13.5px] font-medium text-[#090909] hover:bg-[#F4F4F2] transition-colors disabled:text-[#888888] disabled:cursor-not-allowed flex items-center justify-center gap-2.5"
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              fill="#4285F4"
-              d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
-            />
-            <path
-              fill="#34A853"
-              d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24z"
-            />
-            <path
-              fill="#FBBC05"
-              d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14z"
-            />
-            <path
-              fill="#EA4335"
-              d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96z"
-            />
+          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z" />
+            <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24z" />
+            <path fill="#FBBC05" d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14z" />
+            <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96z" />
           </svg>
-          Continue with Google
+          <span>Continue with Google</span>
         </button>
-        {config && !config.google_enabled && (
-          <div style={{ fontSize: 11.5, color: "#777777", marginTop: 8, textAlign: "center" }}>
-            Google Sign-In is disabled (GOOGLE_CLIENT_ID not configured).
-          </div>
-        )}
 
-        <div
-          style={{
-            textAlign: "center",
-            marginTop: 22,
-            fontSize: 13,
-            color: "#777777",
-          }}
-        >
+        <div className="text-center mt-6 text-[13px] text-[#666666]">
           Need an account?{" "}
-          <Link
-            href="/register"
-            style={{ color: "#050505", fontWeight: 500, textDecoration: "none" }}
-          >
+          <Link href="/register" className="text-[#090909] font-medium hover:underline">
             Register
           </Link>
         </div>
       </div>
 
-      <div
-        style={{
-          marginTop: 24,
-          fontSize: 11.5,
-          color: "#AAAAAA",
-          textAlign: "center",
-        }}
-      >
+      <div className="mt-6 text-[11.5px] text-[#888888] text-center">
         Offline privacy engine remains independent of web login
       </div>
     </div>
