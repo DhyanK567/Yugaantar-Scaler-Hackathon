@@ -14,10 +14,61 @@ if (!gotLock) {
 
 let mainWindow = null;
 let backendProc = null;
-let frontendProc = null;
+let staticServer = null;
 let isShuttingDown = false;
 let activeApiPort = 8000;
 let activeUiPort = 3001;
+
+const MIME_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
+  ".txt": "text/plain; charset=utf-8",
+};
+
+function startStaticWebServer(webRoot, port) {
+  return new Promise((resolve, reject) => {
+    const resolvedRoot = path.resolve(webRoot);
+    const srv = http.createServer((req, res) => {
+      const urlPath = decodeURIComponent((req.url || "/").split("?")[0]);
+      let rel = urlPath.replace(/^\/+/, "");
+      let candidate = path.resolve(resolvedRoot, rel);
+      if (!candidate.startsWith(resolvedRoot)) {
+        res.writeHead(403);
+        res.end("Forbidden");
+        return;
+      }
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+        candidate = path.join(candidate, "index.html");
+      } else if (!fs.existsSync(candidate) && fs.existsSync(`${candidate}.html`)) {
+        candidate = `${candidate}.html`;
+      } else if (!fs.existsSync(candidate)) {
+        candidate = path.join(resolvedRoot, "404.html");
+      }
+      if (!fs.existsSync(candidate)) {
+        res.writeHead(404);
+        res.end("Not Found");
+        return;
+      }
+      const ext = path.extname(candidate).toLowerCase();
+      res.writeHead(200, { "Content-Type": MIME_TYPES[ext] || "application/octet-stream" });
+      fs.createReadStream(candidate).pipe(res);
+    });
+    srv.on("error", reject);
+    srv.listen(port, "127.0.0.1", () => {
+      const addr = srv.address();
+      resolve({ server: srv, port: typeof addr === "object" && addr ? addr.port : port });
+    });
+  });
+}
 
 function getFreePort() {
   return new Promise((resolve, reject) => {
@@ -118,9 +169,15 @@ function killProcessTree(proc) {
 function shutdownServices() {
   if (isShuttingDown) return;
   isShuttingDown = true;
-  killProcessTree(frontendProc);
+  if (staticServer) {
+    try {
+      staticServer.close();
+    } catch {
+      // ignore
+    }
+    staticServer = null;
+  }
   killProcessTree(backendProc);
-  frontendProc = null;
   backendProc = null;
 }
 
@@ -129,18 +186,14 @@ function resolveRuntimePaths() {
     const res = process.resourcesPath;
     return {
       backendExe: path.join(res, "backend", "medilocker-backend.exe"),
-      nodeExe: path.join(res, "node", "node.exe"),
-      webServerJs: path.join(res, "web", "server.js"),
-      webCwd: path.join(res, "web"),
+      webDir: path.join(res, "web"),
       iconPath: path.join(res, "..", "resources", "app.asar", "assets", "icon.ico"),
     };
   }
   const repoRoot = path.resolve(__dirname, "..");
   return {
     backendExe: path.join(__dirname, "py_dist", "medilocker-backend", "medilocker-backend.exe"),
-    nodeExe: process.execPath.endsWith("node.exe") ? process.execPath : "node",
-    webServerJs: path.join(__dirname, "web_dist", "server.js"),
-    webCwd: path.join(__dirname, "web_dist"),
+    webDir: path.join(__dirname, "web_dist"),
     iconPath: path.join(__dirname, "assets", "icon.ico"),
     repoRoot,
   };
@@ -252,21 +305,11 @@ async function startDesktopApp() {
     );
   }
 
-  if (!fs.existsSync(paths.webServerJs)) {
-    throw new Error(`Bundled Next.js server not found at: ${paths.webServerJs}`);
+  if (!fs.existsSync(path.join(paths.webDir, "index.html"))) {
+    throw new Error(`Bundled static web export not found at: ${paths.webDir}`);
   }
-  frontendProc = spawn(paths.nodeExe, [paths.webServerJs], {
-    cwd: paths.webCwd,
-    env: {
-      ...sharedEnv,
-      HOSTNAME: "127.0.0.1",
-      PORT: String(activeUiPort),
-    },
-    windowsHide: true,
-    stdio: "ignore",
-  });
-
-  await waitForHttp(`http://127.0.0.1:${activeUiPort}/login`, 30000);
+  const webStarted = await startStaticWebServer(paths.webDir, activeUiPort);
+  staticServer = webStarted.server;
 
   // Strict Content Security Policy & Loopback-only guard
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {

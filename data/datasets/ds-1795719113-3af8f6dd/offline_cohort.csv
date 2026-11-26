@@ -1,0 +1,3 @@
+patient_name,age,gender,phone,diagnosis,lab_result
+Aarav Mehta,39,M,9876501234,Hypertension,BP 128/82 mmHg
+Kavita Iyer,47,F,9876505678,Diabetes,Glucose 142 mg/dL
