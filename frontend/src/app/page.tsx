@@ -1,6 +1,7 @@
 import Link from "next/link";
 import MarketingNav from "@/components/layout/MarketingNav";
 import { LiveTrustMetrics } from "@/components/landing/LiveTrustMetrics";
+import { HeroDownloadCta } from "@/components/landing/HeroDownloadCta";
 
 const FEATURES = [
   {
@@ -49,20 +50,7 @@ export default function HomePage() {
             collaborate.
           </p>
 
-          <div className="flex flex-wrap items-center gap-3 shrink-0">
-            <Link
-              href="/register"
-              className="px-6 py-3 rounded-full bg-[#090909] text-white text-[13.5px] font-medium hover:bg-[#222222] transition-colors"
-            >
-              Get started free
-            </Link>
-            <Link
-              href="/dashboard"
-              className="px-6 py-3 rounded-full bg-white border border-[#090909] text-[#090909] text-[13.5px] font-medium hover:bg-[#E6E6E6] transition-colors"
-            >
-              Open console
-            </Link>
-          </div>
+          <HeroDownloadCta />
         </div>
       </section>
 
