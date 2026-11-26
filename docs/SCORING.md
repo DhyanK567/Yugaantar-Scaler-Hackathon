@@ -2,7 +2,7 @@
 
 All weights and thresholds live in [`scoring.toml`](../scoring.toml). Its SHA-256
 is stamped on every scorecard, so a changed rule is visible. The six category weights
-are the official ones from §8 of the problem statement, unchanged.
+are the official ones from §6 of the problem statement, unchanged.
 
 ```
 total = 100 × Σ weight_c × score_c  −  critical penalties        (not floored at 0)
@@ -124,7 +124,7 @@ heaviest category.
 | pseudonym consistency | 0.10 | share of `records.jsonl` claims whose pseudonym is actually present in that exported record |
 | channel hygiene | 0.15 | seven side channels: `report.json`, `records.jsonl`, `logs/`, other output files, output file names, stdout/stderr, TMPDIR/HOME. Each is clean (1), has PII (0), or has leftover temp files without PII (0.5). |
 | quarantine handling | 0.15 | 0.5 × malformed/unsupported files handled safely (quarantined, or exported without a raw copy) + 0.3 × (1 − silent-drop rate) + 0.2 × (1 − unprocessed-copy rate) |
-| report quality | 0.10 | 0.5 × completeness (§9.C fields, timing, resources, every file listed) + 0.5 × honesty (`files_total`, `files_sanitized`, `files_quarantined` equal what was really exported) |
+| report quality | 0.10 | 0.5 × completeness ([SPEC §5](SPEC.md#5-reportjson) fields, timing, resources, every file listed) + 0.5 × honesty (`files_total`, `files_sanitized`, `files_quarantined` equal what was really exported) |
 
 ## 6. CPU efficiency & reliability (10%)
 
@@ -138,7 +138,7 @@ Absolute thresholds per dataset profile (identical for every team):
 | determinism | 0.20 | share of identical `sanitized/` files and `records.jsonl` across two runs with the same secret |
 | scaling (optional) | 0.15 | runtime growth exponent on a larger dataset: ≤ 1.15 → 1, ≥ 2.0 → 0 |
 
-## Critical penalties (§8 "separate penalty")
+## Critical penalties (§6 "Penalties")
 
 | Event | Points |
 |---|---:|

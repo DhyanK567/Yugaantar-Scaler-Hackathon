@@ -39,6 +39,7 @@ All data is synthetic. No real patient appears anywhere.
 | 📝 | [`brief/`](brief) | a fill-in template for the 2-page Project Brief PDF |
 | 🧱 | [`starter/`](starter) | a working skeleton that already writes the correct output format |
 | ✅ | [`validate_output.py`](validate_output.py) | the format checker; must print `CONTRACT OK` |
+| 🚦 | [`check_submission.py`](check_submission.py) | the pre-submit check: `raksha.toml`, README, PDF, runs your repo 3 times; must print `READY TO SUBMIT` |
 | 📊 | [`check_dev.py`](check_dev.py) | the practice self-check: leaks, canaries, medical values kept, linking quality |
 | ⚖️ | [`scoring.toml`](scoring.toml) | every weight, threshold and penalty, as used by the official evaluator |
 | 📚 | [`docs/`](docs) | statement, format, scoring, attacks, dataset, sandbox, fairness, FAQ |
@@ -81,7 +82,12 @@ output/
 {"file": "sanitized/discharge/note1.txt",       "loc": "doc",      "patient": "PSN-7Q2K9D"}
 ```
 
-**3. Check:** `python3 validate_output.py --input dev/input --output my_output` → `CONTRACT OK`.
+**3. Check:**
+
+```bash
+python3 validate_output.py --input dev/input --output my_output     # → CONTRACT OK
+python3 check_submission.py --repo ../your-repo --run               # → READY TO SUBMIT
+```
 
 **4. Submit your GitHub link and your 2-page Project Brief PDF before the deadline.** We freeze your last commit at the deadline.
 How to write the brief: [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md) · template: [brief/PROJECT_BRIEF_TEMPLATE.md](brief/PROJECT_BRIEF_TEMPLATE.md).
@@ -124,7 +130,7 @@ That last gap is the point: **build for data you have not seen.**
 * **Fail safe:** quarantine what you can't clean. Never copy raw files or silently skip files.
 * **Original work:** the repository is created during the hackathon.
 
-Full rules: [docs/PROBLEM_STATEMENT.md §6](docs/PROBLEM_STATEMENT.md).
+Full rules: [docs/PROBLEM_STATEMENT.md §7](docs/PROBLEM_STATEMENT.md).
 
 ## 📚 Documentation
 

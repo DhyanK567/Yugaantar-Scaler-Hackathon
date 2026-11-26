@@ -1,6 +1,6 @@
 # Submission contract (v1): Track 3 "Secret Wards"
 
-This contract is the "specified submission format" required by §7.8 of the problem
+This contract is the "specified submission format" required by §4 (Submission Format) of the problem
 statement. Every team is run and scored through exactly this interface. Nothing
 outside it earns or loses points.
 
@@ -35,7 +35,7 @@ RAKSHAK_POLICY = "config/policy.yaml"
 |---|---|
 | CPUs | 2 (enforced with CPU affinity) |
 | Memory | 4,096 MB peak RSS of your **whole process tree** (sampled every 50 ms; killed above it) |
-| Time | a fixed wall-clock limit per run, as stated in the problem statement (§6). Fast systems also earn speed points |
+| Time | a fixed wall-clock limit per run, as stated in the problem statement (§7: 15 minutes). Fast systems also earn speed points |
 | Network | none during `run` (connection attempts are logged and flagged for the judges) |
 | Visibility | only your repository, the read-only input copy, your output folder and private TMP/HOME; truth, seeds, other teams and host processes are hidden |
 | Input | a fresh read-only copy; it is re-hashed after the run, and modifying it is penalised |

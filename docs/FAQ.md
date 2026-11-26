@@ -80,6 +80,11 @@ UTF-8 (a BOM is fine), whatever the input encoding was.
 **How do I know my format is right?**
 `python3 validate_output.py --input dev/input --output my_output` must print `CONTRACT OK`.
 
+**How do I know my repo is ready to submit?**
+`python3 check_submission.py --repo <your-repo> --run` checks `raksha.toml`, README, the PDF and
+your requirements, then runs your system 3 times: contract, identical repeat, a different
+secret, the secret never written, the input untouched. It must print `READY TO SUBMIT`.
+
 **How do I know if I'm doing well?**
 `python3 check_dev.py --output my_output` compares you with the practice answer key:
 leaks by type, language and hiding place, canaries, medical values kept, linking

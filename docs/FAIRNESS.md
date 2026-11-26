@@ -94,6 +94,6 @@ the same scores.
 
 `raksha-eval audit --submission <repo> --dev-dataset <dev>` flags generative-LLM, cloud
 and GPU usage, runtime network calls, hard-coded dev identifiers and missing deliverables
-(§9 of the statement). Flags go to the judges for review. They never deduct points
+(§7 Ground Rules of the statement). Flags go to the judges for review. They never deduct points
 automatically, because static analysis has false positives and an automatic penalty
 would be a partial judgement.

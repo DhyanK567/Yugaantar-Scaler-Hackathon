@@ -47,6 +47,28 @@ The starter passes the format check but leaks almost everything, which is expect
 scores about **8 / 100** officially. Your job is to push that number up. Re-run step 3
 after every change and watch the leak numbers fall.
 
+### Then make your own repository
+
+The kit is for reading and testing. Your **submission** is your own new repo, created
+during the hackathon. Keep the two folders side by side:
+
+```
+hackathon/
+├── Secret-Wards/     ← this kit (read and test with it)
+└── your-repo/        ← your submission
+```
+
+```bash
+cd ..
+git clone https://github.com/<your-team>/<your-repo>.git
+cp -r Secret-Wards/starter/* your-repo/        # raksha.toml, main.py, requirements.txt, config/
+cd your-repo
+RAKSHA_SECRET=practice python3 main.py --input ../Secret-Wards/dev/input --output out
+python3 ../Secret-Wards/validate_output.py --input ../Secret-Wards/dev/input --output out
+python3 ../Secret-Wards/check_dev.py --output out
+python3 ../Secret-Wards/check_submission.py --repo . --run
+```
+
 > On Windows, set the secret with `set RAKSHA_SECRET=practice` (cmd) or
 > `$env:RAKSHA_SECRET="practice"` (PowerShell) before step 1.
 
@@ -192,6 +214,7 @@ Do it in this order. Each step is measurable with `check_dev.py`.
 
 ## 8. Checklist before you submit
 
+- [ ] `python3 check_submission.py --repo <your-repo> --run` prints **READY TO SUBMIT**
 - [ ] `raksha.toml` is at the **root** of your repo
 - [ ] `setup` installs everything; `run` needs **no internet**
 - [ ] `validate_output.py` prints **CONTRACT OK**

@@ -1,6 +1,6 @@
 # The Privacy Attack Arena
 
-The statement's main twist (§5) is an automated adversary that tries to work out *which
+The statement's main twist (§1, Mission Brief) is an automated adversary that tries to work out *which
 original patient* each sanitised record belongs to. This document specifies that
 adversary. Following Kerckhoffs' principle, the **method is public** and the
 **knowledge is secret**: this page describes the attack exactly (the code itself is published with the evaluator after the
@@ -99,7 +99,7 @@ exposure stays high. The 56 rare-condition hits show that keeping a rare diagnos
 next to an exact age band and district identifies the "97-year-old with a rare
 procedure" (Challenge 4) even after every date was shifted. Defending against that
 needs suppression or coarser generalisation **of the rare records only**, which is the
-k-anonymity-style risk analysis the statement asks for (§6, Adversarial Risk Analyzer).
+k-anonymity-style risk analysis the statement asks for (the Re-identification Trap, and your measured re-identification risk).
 
 ### Attacker self-checks
 
