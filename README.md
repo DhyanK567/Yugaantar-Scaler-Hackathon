@@ -9,6 +9,24 @@ MediLocker is an offline-first healthcare data privacy platform designed to help
 
 ---
 
+# One-Click Verification
+
+Run the complete offline verification suite (engine execution, official output contract check, submission checker, clinical integrity, clinical drift, attack simulation, cryptography, multilingual PII, privacy passport, PDF reporting, and E2E workflow tests) with one command:
+
+**Windows (PowerShell):**
+```powershell
+.\scripts\verify_submission.ps1
+```
+
+**Linux / macOS (Bash):**
+```bash
+bash scripts/verify_submission.sh
+```
+
+See [docs/VERIFICATION_GUIDE.md](docs/VERIFICATION_GUIDE.md) for detailed stage descriptions and manual checker commands.
+
+---
+
 ## Table of Contents
 
 1. [Problem Statement & Approach](#1-problem-statement--approach)
