@@ -705,6 +705,7 @@ def list_datasets(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str
             SELECT d.*, o.name as organisation_name,
                    (SELECT j.id FROM jobs j WHERE j.dataset_id = d.id ORDER BY j.created_at DESC LIMIT 1) as latest_job_id,
                    (SELECT j.status FROM jobs j WHERE j.dataset_id = d.id ORDER BY j.created_at DESC LIMIT 1) as latest_job_status,
+                   (SELECT j.release_decision FROM jobs j WHERE j.dataset_id = d.id ORDER BY j.created_at DESC LIMIT 1) as latest_release_decision,
                    (SELECT j.records_processed FROM jobs j WHERE j.dataset_id = d.id ORDER BY j.created_at DESC LIMIT 1) as records
             FROM datasets d
             JOIN organisations o ON o.id = d.organisation_id
@@ -1066,26 +1067,42 @@ def get_job_results(job_id: str, user: Dict[str, Any] = Depends(require_user)) -
 
 
 @app.get("/api/jobs/{job_id}/download")
-def download_job_outputs(job_id: str, user: Dict[str, Any] = Depends(require_user)):
+def download_job_outputs(job_id: str, request: Request, user: Dict[str, Any] = Depends(require_user)):
     job = get_job_detail(job_id, user)
     if job.get("organisation_id"):
         require_org_access(user, job["organisation_id"])
+    if job.get("release_decision") not in ("APPROVED", "APPROVED_WITH_WARNINGS") or job.get("status") not in ("COMPLETED", "COMPLETED_WITH_WARNINGS"):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Bundle download blocked: job status is {job.get('status')} (decision: {job.get('release_decision')})",
+        )
     job_output = JOBS_DIR / job_id / "output"
     sanitized_dir = job_output / "sanitized"
-    if not sanitized_dir.exists():
-        raise HTTPException(status_code=404, detail="Sanitized output not found for this job")
+    if not sanitized_dir.exists() or not (job_output / "report.json").exists() or not (job_output / "records.jsonl").exists():
+        raise HTTPException(status_code=404, detail="Complete sanitized output bundle not found for this job")
 
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for root, _, files in os.walk(str(sanitized_dir)):
             for f in files:
                 file_path = Path(root) / f
-                arcname = file_path.relative_to(sanitized_dir)
+                arcname = file_path.relative_to(sanitized_dir).as_posix()
                 zf.write(file_path, f"sanitized/{arcname}")
-        if (job_output / "report.json").exists():
-            zf.write(job_output / "report.json", "report.json")
-        if (job_output / "records.jsonl").exists():
-            zf.write(job_output / "records.jsonl", "records.jsonl")
+        zf.write(job_output / "report.json", "report.json")
+        zf.write(job_output / "records.jsonl", "records.jsonl")
+
+    record_audit_event(
+        action="BUNDLE_DOWNLOADED",
+        resource_type="job",
+        resource_id=job_id,
+        outcome="SUCCESS",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user.get("active_role"),
+        organisation_id=job.get("organisation_id"),
+        details=f"Downloaded approved release bundle ({job.get('release_decision')})",
+        ip_address=_client_ip(request),
+    )
 
     zip_buffer.seek(0)
     return StreamingResponse(

@@ -29,6 +29,9 @@ export default function DatasetsPage() {
         if (list.length > 0 && !selectedOrg) setSelectedOrg(list[0].id);
       })
       .catch(() => {});
+    if (activeJob) {
+      api.getJob(activeJob.id).then(setActiveJob).catch(() => {});
+    }
   }
 
   useEffect(() => {
@@ -103,7 +106,13 @@ export default function DatasetsPage() {
             </label>
             <select
               value={selectedOrg}
-              onChange={(e) => setSelectedOrg(e.target.value)}
+              onChange={(e) => {
+                const nextOrg = e.target.value;
+                setSelectedOrg(nextOrg);
+                if (activeJob && activeJob.organisation_id && activeJob.organisation_id !== nextOrg) {
+                  setActiveJob(null);
+                }
+              }}
               style={{
                 padding: "8px 12px",
                 border: "1.5px solid #DCDCDC",
@@ -215,7 +224,8 @@ export default function DatasetsPage() {
               </div>
             </div>
           </div>
-          {["COMPLETED", "COMPLETED_WITH_WARNINGS"].includes(activeJob.status) && (
+          {["COMPLETED", "COMPLETED_WITH_WARNINGS"].includes(activeJob.status) &&
+            ["APPROVED", "APPROVED_WITH_WARNINGS"].includes(activeJob.release_decision || "") && (
             <a
               href={api.downloadJobUrl(activeJob.id)}
               style={{
@@ -301,12 +311,38 @@ export default function DatasetsPage() {
                     {d.file_count}
                   </td>
                   <td style={{ padding: "12px 18px", fontSize: 12, fontWeight: 600, color: "#050505" }}>
-                    {d.latest_job_status || "NOT_RUN"}
+                    <div>{d.latest_job_status || "NOT_RUN"}</div>
+                    {d.latest_job_id && (
+                      <div style={{ fontSize: 11, fontWeight: 400, color: "#777777" }}>
+                        {d.latest_job_id} · {d.latest_release_decision || "PENDING"}
+                      </div>
+                    )}
                   </td>
                   <td style={{ padding: "12px 18px", fontSize: 12, color: "#777777" }}>
                     {new Date(d.created_at * 1000).toLocaleDateString()}
                   </td>
-                  <td style={{ padding: "12px 18px", textAlign: "right" }}>
+                  <td style={{ padding: "12px 18px", textAlign: "right", whiteSpace: "nowrap" }}>
+                    {d.latest_job_id &&
+                      ["COMPLETED", "COMPLETED_WITH_WARNINGS"].includes(d.latest_job_status || "") &&
+                      ["APPROVED", "APPROVED_WITH_WARNINGS"].includes(d.latest_release_decision || "") && (
+                        <a
+                          href={api.downloadJobUrl(d.latest_job_id)}
+                          title="Download Bundle"
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                            marginRight: 10,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            color: "#050505",
+                            textDecoration: "none",
+                          }}
+                        >
+                          <Download size={13} />
+                          Bundle
+                        </a>
+                      )}
                     <button
                       onClick={() => handleDelete(d.id)}
                       title="Delete dataset"
