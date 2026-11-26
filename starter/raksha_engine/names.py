@@ -93,27 +93,62 @@ def phonetic_norm(token: str) -> str:
     return t
 
 
-def normalize_name_tokens(name: str) -> list[str]:
-    """Return normalized phonetic tokens for a person name (excluding honorifics)."""
-    s = unicodedata.normalize("NFKC", name).casefold()
+def normalize_name_tokens(name: str, keep_initials: bool = False) -> list[str]:
+    """Return normalized phonetic tokens for a person name (excluding honorifics).
+
+    Supports Devanagari, Hinglish, zero-width stripping, and 'Surname, First M.' ordering.
+    """
+    s = unicodedata.normalize("NFKC", name)
+    s = re.sub(r"[\u200b-\u200d\ufeff]", "", s).casefold()
     if any("\u0900" <= c <= "\u097f" for c in s):
         s = deva_to_latin(s)
+    # Handle "Surname, Given Middle" format
+    if "," in s:
+        parts = [p.strip() for p in s.split(",", 1)]
+        if len(parts) == 2 and parts[0] and parts[1]:
+            s = f"{parts[1]} {parts[0]}"
     # Expand common abbreviations before stripping punctuation
     s = re.sub(r"\b(?:mohd|md)\.?\b", "mohammad", s)
     s = re.sub(r"\b(?:smt|shri|dr|mr|mrs|ms|km)\.?\b", " ", s)
     raw_tokens = re.findall(r"[a-z]+", s)
-    stop = {"ji", "sahab", "saheb", "behenji", "bhaiya", "didi", "bhai", "devi", "kumar", "kumari", "lal", "singh", "kaur"}
     out = []
+    min_len = 1 if keep_initials else 2
     for tok in raw_tokens:
         if tok in {"ji", "sahab", "saheb", "behenji", "bhaiya", "didi", "bhai"}:
             continue
         p = phonetic_norm(tok)
-        if len(p) >= 2:
+        if len(p) >= min_len:
             out.append(p)
-    # If all tokens were generic (e.g., "Devi"), keep them as fallback
     if not out:
-        out = [phonetic_norm(t) for t in raw_tokens if len(t) >= 2]
+        out = [phonetic_norm(t) for t in raw_tokens if len(t) >= min_len]
     return out
+
+
+def names_match_with_initials(toks_a: list[str], toks_b: list[str]) -> bool:
+    """Return True if two token lists represent the same name allowing initials
+    (e.g. ['r', 'k', 'werma'] vs ['rajes', 'kumar', 'werma']) and matching surname.
+    """
+    if not toks_a or not toks_b:
+        return False
+    # Surname (last token) must match or be very close
+    if toks_a[-1] != toks_b[-1]:
+        return False
+    if len(toks_a) < 2 or len(toks_b) < 2:
+        return False
+    # Compare given/middle tokens allowing 1-char initial prefix match
+    g_a, g_b = toks_a[:-1], toks_b[:-1]
+    if len(g_a) != len(g_b):
+        # Allow "R. Kumar" vs "Rajesh Kumar" if first initial matches
+        return len(g_a[0]) == 1 and g_b[0].startswith(g_a[0]) or len(g_b[0]) == 1 and g_a[0].startswith(g_b[0])
+    for ta, tb in zip(g_a, g_b):
+        if ta == tb:
+            continue
+        if len(ta) == 1 and tb.startswith(ta):
+            continue
+        if len(tb) == 1 and ta.startswith(tb):
+            continue
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
