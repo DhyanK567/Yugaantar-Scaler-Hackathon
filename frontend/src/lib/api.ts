@@ -1,7 +1,15 @@
 // Central MediLocker API Client
 // Uses environment-based API URL, HttpOnly cookie sessions, timeouts, and typed contracts.
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+function getApiBase(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== "undefined") {
+    return `http://${window.location.hostname}:8000`;
+  }
+  return "http://127.0.0.1:8000";
+}
+
+const API_BASE = getApiBase();
 
 export class ApiError extends Error {
   status: number;
@@ -149,6 +157,7 @@ export interface AuthUser {
 }
 
 export interface AuthConfig {
+  offline_mode?: boolean;
   smtp_enabled: boolean;
   dev_email_login_enabled?: boolean;
   google_enabled: boolean;
@@ -318,6 +327,11 @@ export const api = {
     request<{ user: AuthUser; token: string }>("/api/auth/dev-login", {
       method: "POST",
       body: JSON.stringify({ email }),
+    }),
+  offlineDemoLogin: (email?: string) =>
+    request<{ user: AuthUser; token: string }>("/api/auth/offline-demo", {
+      method: "POST",
+      body: JSON.stringify(email ? { email } : {}),
     }),
   googleLoginUrl: () => request<{ auth_url: string; state: string }>("/api/auth/google/login"),
   googleCallback: (code: string, state: string) =>

@@ -62,6 +62,8 @@ from .auth import (
     get_smtp_config,
     handle_google_callback,
     is_dev_email_login_enabled,
+    is_offline_mode_enabled,
+    offline_demo_login,
     request_email_otp,
     require_org_access,
     require_roles,
@@ -92,7 +94,8 @@ app = FastAPI(
 allowed_origins = [
     o.strip()
     for o in os.environ.get(
-        "FRONTEND_ORIGINS", "http://localhost:3001,http://localhost:3000"
+        "FRONTEND_ORIGINS",
+        "http://127.0.0.1:3001,http://127.0.0.1:3000,http://localhost:3001,http://localhost:3000",
     ).split(",")
     if o.strip()
 ]
@@ -156,6 +159,7 @@ def get_auth_config() -> Dict[str, Any]:
     smtp = get_smtp_config()
     google = get_google_config()
     return {
+        "offline_mode": is_offline_mode_enabled(),
         "smtp_enabled": smtp["configured"],
         "dev_email_login_enabled": is_dev_email_login_enabled(),
         "google_enabled": google["configured"],
@@ -238,6 +242,25 @@ class OtpVerifyBody(BaseModel):
 
 class DevLoginBody(BaseModel):
     email: str
+
+
+class OfflineDemoBody(BaseModel):
+    email: Optional[str] = None
+
+
+@app.post("/api/auth/offline-demo")
+def auth_offline_demo(
+    request: Request,
+    response: Response,
+    body: Optional[OfflineDemoBody] = None,
+) -> Dict[str, Any]:
+    raw_token, ctx = offline_demo_login(
+        body.email if body else None,
+        _client_ip(request),
+        request.headers.get("user-agent"),
+    )
+    set_session_cookie(response, raw_token)
+    return {"user": ctx, "token": raw_token}
 
 
 @app.post("/api/auth/dev-login")

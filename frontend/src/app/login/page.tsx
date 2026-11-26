@@ -61,6 +61,18 @@ export default function LoginPage() {
     }
   }
 
+  async function handleOfflineDemo() {
+    setLoading(true);
+    setError("");
+    try {
+      await api.offlineDemoLogin(email || undefined);
+      window.location.href = "/dashboard";
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Offline demo login failed.");
+    }
+    setLoading(false);
+  }
+
   return (
     <div
       style={{
@@ -151,6 +163,43 @@ export default function LoginPage() {
             }}
           >
             {info}
+          </div>
+        )}
+
+        {config?.offline_mode && (
+          <div
+            style={{
+              padding: "12px 14px",
+              background: "#F2F2F2",
+              border: "1.5px solid #050505",
+              borderRadius: 8,
+              marginBottom: 18,
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#050505", marginBottom: 4 }}>
+              Offline Local Demo Mode Active
+            </div>
+            <div style={{ fontSize: 12, color: "#555555", marginBottom: 10 }}>
+              Running 100% locally on loopback (127.0.0.1). No internet, SMTP, or Google OAuth required.
+            </div>
+            <button
+              type="button"
+              onClick={handleOfflineDemo}
+              disabled={loading}
+              style={{
+                width: "100%",
+                padding: "10px 14px",
+                background: "#050505",
+                color: "#FFFFFF",
+                border: "none",
+                borderRadius: 6,
+                fontSize: 13.5,
+                fontWeight: 600,
+                cursor: loading ? "not-allowed" : "pointer",
+              }}
+            >
+              Continue in Offline Demo Mode
+            </button>
           </div>
         )}
 
