@@ -1,0 +1,3 @@
+patient_name,age,gender,phone,diagnosis,lab_result
+Rohan Sharma,44,M,9811223344,Type 2 Diabetes,HbA1c 7.2 mg/dL
+Sunita Devi,52,F,9822334455,Hypertension,BP 130/80 mmHg
