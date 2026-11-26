@@ -1,96 +1,17 @@
-"""Multilingual (English, Hindi/Devanagari, Hinglish) name, relative & transliteration engine
-with strict medical-context preservation guards.
+"""Multilingual (English, Hindi/Devanagari, Hinglish) name & relationship detection engine
+with strict medical-context preservation guards and cross-script transliteration learning.
 """
 from __future__ import annotations
 
 import re
 import unicodedata
-
-# ---------------------------------------------------------------------------
-# Devanagari -> Latin phonetic transliteration (rule-based, zero dependencies)
-# ---------------------------------------------------------------------------
-_CONSONANTS = {
-    "क": "k", "ख": "kh", "ग": "g", "घ": "gh", "ङ": "ng",
-    "च": "ch", "छ": "chh", "ज": "j", "झ": "jh", "ञ": "ny",
-    "ट": "t", "ठ": "th", "ड": "d", "ढ": "dh", "ण": "n",
-    "त": "t", "थ": "th", "द": "d", "ध": "dh", "न": "n",
-    "प": "p", "फ": "ph", "ब": "b", "भ": "bh", "म": "m",
-    "य": "y", "र": "r", "ल": "l", "व": "v", "श": "sh",
-    "ष": "sh", "स": "s", "ह": "h",
-    "क़": "q", "ख़": "kh", "ग़": "gh", "ज़": "z", "ड़": "r", "ढ़": "rh", "फ़": "f",
-}
-_VOWELS_INDEP = {
-    "अ": "a", "आ": "aa", "इ": "i", "ई": "ee", "उ": "u", "ऊ": "oo",
-    "ऋ": "ri", "ए": "e", "ऐ": "ai", "ओ": "o", "औ": "au",
-    "अं": "an", "अः": "ah",
-}
-_MATRAS = {
-    "ा": "a", "ि": "i", "ी": "ee", "ु": "u", "ू": "oo",
-    "ृ": "ri", "े": "e", "ै": "ai", "ो": "o", "ौ": "au",
-    "ं": "n", "ँ": "n", "ः": "h", "्": "",
-}
-_VIRAMA = "्"
-
-
-def deva_to_latin(text: str) -> str:
-    """Transliterate Devanagari text to approximate Latin phonetic form."""
-    out: list[str] = []
-    n = len(text)
-    i = 0
-    while i < n:
-        ch = text[i]
-        # Handle nukta combinations (base + ़)
-        if i + 1 < n and text[i + 1] == "़" and (ch + "़") in _CONSONANTS:
-            ch = ch + "़"
-            i += 1
-        if ch in _CONSONANTS:
-            out.append(_CONSONANTS[ch])
-            nxt = text[i + 1] if i + 1 < n else ""
-            if nxt in _MATRAS:
-                if nxt != _VIRAMA:
-                    out.append(_MATRAS[nxt])
-                i += 1
-            elif nxt and nxt in _CONSONANTS:
-                # Inherent schwa 'a' between consonants
-                out.append("a")
-        elif ch in _VOWELS_INDEP:
-            out.append(_VOWELS_INDEP[ch])
-        elif ch in _MATRAS:
-            out.append(_MATRAS[ch])
-        else:
-            out.append(ch)
-        i += 1
-    return "".join(out)
-
-
-# Common Indian name abbreviation / spelling equivalences
-_PHONETIC_SUBS = [
-    (re.compile(r"\b(?:mohd|md|mohammad|muhammad|mohammed|mohamed)\b"), "mohammad"),
-    (re.compile(r"\b(?:smt|shrimati|mrs|ms|kumari|km|shri|mr)\b\.?"), ""),
-    (re.compile(r"aa+"), "a"),
-    (re.compile(r"ee+"), "i"),
-    (re.compile(r"oo+"), "u"),
-    (re.compile(r"ai"), "e"),
-    (re.compile(r"ph"), "f"),
-    (re.compile(r"v"), "w"),
-    (re.compile(r"sh"), "s"),
-    (re.compile(r"z"), "j"),
-    (re.compile(r"q"), "k"),
-    (re.compile(r"(.)\1+"), r"\1"),
-]
-
-
-def phonetic_norm(token: str) -> str:
-    """Normalize a Latin or Devanagari name token to a phonetic skeleton."""
-    t = unicodedata.normalize("NFKC", token).casefold().strip()
-    if any("\u0900" <= c <= "\u097f" for c in t):
-        t = deva_to_latin(t)
-    t = re.sub(r"[^a-z]", "", t)
-    if not t:
-        return ""
-    for rx, rep in _PHONETIC_SUBS:
-        t = rx.sub(rep, t)
-    return t
+from .normalizer import (
+    deva_to_latin,
+    is_devanagari,
+    normalize_multilingual_text,
+    phonetic_norm,
+    strip_honorifics,
+)
 
 
 def normalize_name_tokens(name: str, keep_initials: bool = False) -> list[str]:
@@ -122,7 +43,6 @@ def normalize_name_tokens(name: str, keep_initials: bool = False) -> list[str]:
     if not out:
         out = [phonetic_norm(t) for t in raw_tokens if len(t) >= min_len]
     return out
-
 
 def names_match_with_initials(toks_a: list[str], toks_b: list[str]) -> bool:
     """Return True if two token lists represent the same name allowing initials
@@ -168,14 +88,30 @@ CLINICAL_STOPWORDS = {
     "hospital", "clinic", "pathology", "pharmacy", "billing", "claim", "helpdesk", "ticket",
     "worker", "workers", "nurse", "duty", "staff", "attendant", "multispeciality",
     "charitable", "sadan", "seva", "trust", "foundation", "laboratory", "center", "centre",
-    "addison", "addisons", "parkinson", "parkinsons", "crohn", "crohns", "hodgkin", "graves",
-    "alzheimer", "alzheimers", "cushing", "bell", "guillain", "barre", "kawasaki", "meniere",
+    "apollo", "department", "cardiology", "neurology", "oncology", "pediatrics", "orthopedics",
+    "myocardial", "infarction", "lymphoma", "chronic", "kidney", "tuberculosis",
+    "units", "twice", "thrice", "daily", "every", "hours", "hour", "hr", "hrs", "days", "weeks",
+    "oral", "intravenous", "subcutaneous", "topical", "drops", "ointment", "cream", "inhaler",
+    "bd", "tds", "qid", "od", "hs", "sos", "prn", "mg", "mcg", "ml", "mmol", "mmhg", "bpm", "kg", "cm", "dl",
 }
 
-# Patterns for labeled names & relatives in free text
+_EPONYM_WORDS = {
+    "addison", "addisons", "parkinson", "parkinsons", "crohn", "crohns", "hodgkin", "graves",
+    "alzheimer", "alzheimers", "cushing", "bell", "guillain", "barre", "kawasaki", "meniere",
+    "dyspnea", "micturition", "edema", "rash", "chills", "nausea", "headache", "jaundice",
+    "बुखार", "दर्द", "खांसी", "उल्टी", "कमजोरी", "दस्त", "मलेरिया", "डेंगू", "टाइफाइड",
+}
+_EPONYM_SUFFIXES = {"disease", "syndrome", "lymphoma", "palsy", "triad", "sign"}
+
+# ---------------------------------------------------------------------------
+# Patterns for labeled names & relatives in free text (Multilingual)
+# ---------------------------------------------------------------------------
+
 RX_LABELED_NAME = re.compile(
-    r"(?im)(?P<prefix>\b(?:Patient\s*Name|Pt\.?\s*Name|Patient|Pt\.|Beneficiary|Name|Report\s+of|नाम|मरीज)\s*[:\-]\s*)"
-    r"(?!Dr\.?\s)(?P<name>[A-Za-z\u0900-\u097f][A-Za-z\u0900-\u097f.\s]{1,45}?)(?=\s*(?:\n|,|;|\||आयु|Age|\d+\s*(?:Y|yrs|वर्ष)|$))"
+    r"(?im)(?P<prefix>\b(?:Patient\s*Name|Pt\.?\s*Name|Patient|Pt\.|Beneficiary|Name|Report\s+of|"
+    r"नाम|मरीज|रोगी\s*का\s*नाम)\s*[:\-]\s*)"
+    r"(?!Dr\.?\s)(?P<name>[A-Za-z\u0900-\u097f][A-Za-z\u0900-\u097f.\s]{1,45}?)"
+    r"(?=\s*(?:\n|,|;|\||आयु|Age|\d+\s*(?:Y|yrs|वर्ष)|$))"
 )
 
 RX_REPORT_OF = re.compile(
@@ -184,8 +120,10 @@ RX_REPORT_OF = re.compile(
 )
 
 RX_HONORIFIC_NAME = re.compile(
-    r"(?m)(?<!Dr\.\s)(?<!Dr\s)\b(?P<name>(?:[A-Z][a-z]{2,18}|[\u0900-\u097f]{2,18})(?:\s+(?:[A-Z][a-z]{2,18}|[\u0900-\u097f]{2,18}))?)"
-    r"\s+(?P<hon>(?i:ji|sahab|saheb|behenji|bhaiya|bhaisahab|bhai|didi|bhabhiji|bhabhi|papa|mummy|amma|mataji|pitaji|chacha|chachu|chachi|mama|mamu|mami|tau|kaka|bua|mausi|fufa|dada|dadi|nana|nani|uncle|aunty)|जी|साहब)\b"
+    r"(?m)(?<!Dr\.\s)(?<!Dr\s)\b(?P<name>(?:[A-Z][a-z]{2,18}|[\u0900-\u097f]{2,18})"
+    r"(?:\s+(?:[A-Z][a-z]{2,18}|[\u0900-\u097f]{2,18}))?)"
+    r"\s+(?P<hon>(?i:ji|sahab|saheb|behenji|bhaiya|bhaisahab|bhai|didi|bhabhiji|bhabhi|babu|papa|mummy|"
+    r"amma|mataji|pitaji|chacha|chachu|chachi|mama|mamu|mami|tau|kaka|bua|mausi|fufa|dada|dadi|nana|nani|uncle|aunty)|जी|साहब|बाबू)\b"
 )
 
 # WhatsApp / chat sender: "[06/02/26, 7:56 pm] Raju Papa: ..."
@@ -199,30 +137,58 @@ RX_CONTEXT_PERSON = re.compile(
     r"(?!Dr\.?\s)(?P<name>[A-Z][a-z]{1,18}(?:\s+[A-Z][a-z]{1,18}){1,2})(?=\s*(?:\(|,|;|\n|$|\d))"
 )
 
-# Relatives: S/o, D/o, W/o, and C/O ONLY when followed by capitalized/Devanagari name (not C/O fever/pain!)
+# Multilingual Relatives (S/o, D/o, W/o, H/o, Caregiver, Father, Mother, etc. in English & Hindi)
 RX_RELATIVE = re.compile(
-    r"(?m)(?P<rel>\b(?:S/o|D/o|W/o|s/o|d/o|w/o|Father|Husband|Wife|Mother)\s*[:\-]?\s*)"
+    r"(?m)(?P<rel>\b(?:"
+    r"S/o|D/o|W/o|H/o|s/o|d/o|w/o|h/o|"
+    r"Father|Husband|Wife|Mother|Son|Daughter|Guardian|Caregiver|Attendant|Witness|"
+    r"पिता|माता|पति|पत्नी|पुत्र|पुत्री|बेटा|बेटी|के\s+पुत्र|की\s+पत्नी|सपुत्र|वल्द|अभिभावक|परिचारक|गवाह|"
+    r"pita|mata|pati|patni|beta|beti|walad"
+    r")\b(?:\s*[:\-]\s*|\s+))"
     r"(?P<name>[A-Za-z\u0900-\u097f][A-Za-z\u0900-\u097f.\s]{1,35}?)(?=\s*(?:\n|,|;|\)|$))"
 )
+
+# C/O followed by person name (specifically guarding against "C/O fever", "C/O cough" etc.)
 RX_CARE_OF_NAME = re.compile(
-    r"(?m)(?P<rel>\bC/O\s+)(?P<name>[A-Z][a-z]{2,18}(?:\s+[A-Z][a-z]{2,18}){1,2})(?=\s*(?:,|\n|$))"
+    r"(?m)(?P<rel>\b(?:C/O|c/o|Care\s+of)\s+)"
+    r"(?!(?:fever|cough|cold|pain|vomiting|weakness|headache|chest\s+pain|diarrhea|rash|बुखार|खांसी|दर्द)\b)"
+    r"(?P<name>[A-Z][a-z]{2,18}(?:\s+[A-Z][a-z]{2,18}){1,2}|[\u0900-\u097f]{2,18}(?:\s+[\u0900-\u097f]{2,18}){1,2})"
+    r"(?=\s*(?:,|\n|$|\.))"
 )
 
-# Doctor prefix guard: matches "Dr. Ramesh Srivastava" or "Dr Ramesh"
-RX_DOCTOR = re.compile(r"\bDr\.?\s+[A-Z][a-zA-Z.]+(?:\s+[A-Z][a-zA-Z]+){0,2}")
+# Initial-based Indian names (e.g. "M. K. Sharma", "A. K. Gupta", "Mohd. Zenab")
+RX_INITIAL_NAME = re.compile(
+    r"\b(?:[A-Z]\.\s*){1,2}[A-Z][a-z]{2,18}\b"
+)
+
+# Doctor prefix guard & clinical organization/department guard
+RX_DOCTOR = re.compile(r"\b(?:Dr\.?|Doctor|डॉक्टर|डॉ\.)\s+[A-Za-z\u0900-\u097f][A-Za-z\u0900-\u097f.]+(?:\s+[A-Za-z\u0900-\u097f][A-Za-z\u0900-\u097f]+){0,2}")
+RX_ORG_PHRASE = re.compile(
+    r"\b(?:(?:[A-Z][A-Za-z]+\s+){1,3}(?:Hospital|Medical\s+Center|Medical\s+Centre|Clinic|Institute|Nursing\s+Home)|"
+    r"Department\s+of\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,2})\b"
+)
 
 
 def is_clinical_phrase(text: str) -> bool:
-    toks = re.findall(r"[a-z]+", text.casefold())
+    """Return True if text represents a clinical term, disease, or medical role."""
+    toks = re.findall(r"[a-z\u0900-\u097f]+", text.casefold())
     if not toks:
         return False
-    if "asha" in toks and (text.strip() == "ASHA" or "worker" in toks or "workers" in toks):
+    if "asha" in toks and (text.strip() == "ASHA" or "worker" in toks or "workers" in toks or "कार्यकर्ता" in toks):
         return True
-    return any(t in CLINICAL_STOPWORDS for t in toks)
+    if any(t in CLINICAL_STOPWORDS for t in toks):
+        return True
+    if any(t in _EPONYM_WORDS for t in toks):
+        # Treat eponym as clinical when single-word, possessive ('s), or paired with clinical suffix
+        if len(toks) == 1 or "'" in text or any(t in _EPONYM_SUFFIXES for t in toks):
+            return True
+    return False
 
 
 class CorpusNameIndex:
-    """Dynamically learned index of patient & relative names from the input corpus."""
+    """Dynamically learned index of patient & relative names from the input corpus.
+    Maintains cross-script representations (Devanagari <-> Latin) and phonetic clusters.
+    """
 
     def __init__(self) -> None:
         self.full_names: set[str] = set()
@@ -233,7 +199,7 @@ class CorpusNameIndex:
     def add_name(self, raw_name: str) -> None:
         if not raw_name or len(raw_name.strip()) < 2:
             return
-        cleaned = re.sub(r"\b(?:Dr\.?|Mr\.?|Mrs\.?|Ms\.?|Smt\.?|Shri\.?)\s*", "", raw_name, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r"\b(?:Dr\.?|Mr\.?|Mrs\.?|Ms\.?|Smt\.?|Shri\.?|डॉ\.?|श्री|श्रीमती)\s*", "", raw_name, flags=re.IGNORECASE).strip()
         cleaned = re.sub(r"\s+", " ", cleaned)
         if not cleaned or len(cleaned) < 3:
             return
@@ -241,13 +207,26 @@ class CorpusNameIndex:
             return
         if is_clinical_phrase(cleaned):
             return
+
         self.full_names.add(cleaned)
+
+        # Cross-script enrichment: if Devanagari, also add transliterated Latin name
+        if is_devanagari(cleaned):
+            latin_equiv = deva_to_latin(cleaned).title()
+            if len(latin_equiv) >= 3:
+                self.full_names.add(latin_equiv)
+                parts_lat = latin_equiv.split()
+                if parts_lat and len(parts_lat[0]) >= 3:
+                    self.first_names.add(parts_lat[0])
+
         parts = cleaned.split()
         if len(parts) >= 1 and len(parts[0]) >= 3 and parts[0].casefold() not in CLINICAL_STOPWORDS and not parts[0].isupper():
             self.first_names.add(parts[0])
+
         ptoks = normalize_name_tokens(cleaned)
         if ptoks:
             self.full_phonetic.add(" ".join(ptoks))
+
         self._compiled_rx = None
 
     def build_matcher(self) -> re.Pattern[str] | None:
@@ -255,11 +234,11 @@ class CorpusNameIndex:
             return self._compiled_rx
         # Sort longest first so full names match before single tokens
         candidates = sorted(self.full_names, key=len, reverse=True)
-        escaped = [re.escape(c) for c in candidates if len(c) >= 4]
+        escaped = [re.escape(c) for c in candidates if len(c) >= 3]
         if not escaped:
             return None
-        # Match whole-word boundaries (works for Latin; for Devanagari, \b or whitespace/punct)
-        pattern = r"(?<!\w)(?:" + "|".join(escaped) + r")(?!\w)"
+        # Match whole-word boundaries for Latin/Devanagari while never matching all-caps ASHA acronym
+        pattern = r"(?<!\w)(?!(?-i:ASHA)\b)(?:" + "|".join(escaped) + r")(?!\w)"
         self._compiled_rx = re.compile(pattern, re.IGNORECASE)
         return self._compiled_rx
 
@@ -286,7 +265,7 @@ def redact_names_in_text(
     while strictly preserving Doctor names and clinical phrases.
     """
     count = 0
-    # 1. Protect "Dr. <Name>" spans with temporary placeholders
+    # 1. Protect "Dr. <Name>" and clinical organization/department spans with temporary placeholders
     doc_spans: list[str] = []
 
     def _save_doc(m: re.Match[str]) -> str:
@@ -294,8 +273,9 @@ def redact_names_in_text(
         return f"__RAKSHA_DOC_{len(doc_spans) - 1}__"
 
     work = RX_DOCTOR.sub(_save_doc, text)
+    work = RX_ORG_PHRASE.sub(_save_doc, work)
 
-    # 2. Relatives: S/o, D/o, W/o, C/O <Name>
+    # 1. Relatives: S/o, D/o, W/o, H/o, पिता, माता, पति, पत्नी, etc.
     def _sub_rel(m: re.Match[str]) -> str:
         nonlocal count
         name = m.group("name").strip()
@@ -307,7 +287,7 @@ def redact_names_in_text(
     work = RX_RELATIVE.sub(_sub_rel, work)
     work = RX_CARE_OF_NAME.sub(_sub_rel, work)
 
-    # 3. Labeled patient names (Name:, नाम:, Report of ...)
+    # 2. Labeled patient names (Name:, नाम:, Report of ...)
     def _sub_labeled(m: re.Match[str]) -> str:
         nonlocal count
         name = m.group("name").strip()
@@ -321,7 +301,7 @@ def redact_names_in_text(
     work = RX_WHATSAPP_SENDER.sub(_sub_labeled, work)
     work = RX_CONTEXT_PERSON.sub(_sub_labeled, work)
 
-    # 4. Honorifics: "<Name> ji/sahab/behenji/didi/bhaiya/bhai/papa"
+    # 3. Honorifics: "<Name> ji/sahab/behenji/didi/bhaiya/bhai/papa"
     def _sub_hon(m: re.Match[str]) -> str:
         nonlocal count
         name = m.group("name").strip()
@@ -332,13 +312,13 @@ def redact_names_in_text(
 
     work = RX_HONORIFIC_NAME.sub(_sub_hon, work)
 
-    # 5. Corpus-known full names (catches unlabeled mentions in Hindi/English/Hinglish)
+    # 4. Corpus-known full names (including cross-script transliterations)
     rx = index.build_matcher()
     if rx is not None:
         work, n = rx.subn("[PATIENT_NAME]", work)
         count += n
 
-    # 5b. Phonetic 2-word name variants of corpus-known names (e.g., Zenab Bano <-> Zainab Bano)
+    # 5. Phonetic 2-word / 3-word name variants of corpus-known names
     if index.full_phonetic:
         def _sub_phonetic(m: re.Match[str]) -> str:
             nonlocal count
@@ -351,9 +331,9 @@ def redact_names_in_text(
                 return "[PATIENT_NAME]"
             return cand
 
-        work = re.sub(r"\b[A-Z][a-z]{2,18}\s+[A-Z][a-z]{2,18}\b", _sub_phonetic, work)
+        work = re.sub(r"\b[A-Z][a-z]{2,18}(?:\s+[A-Z][a-z]{2,18}){1,2}\b", _sub_phonetic, work)
 
-    # 6. Record/file-local first names (catches "Rajan's attendant", "Irfan ka BP", CSV headers)
+    # 6. Record/file-local first names
     if local_first_names:
         safe_firsts = sorted(
             (fn for fn in local_first_names if len(fn) >= 3 and fn.casefold() not in CLINICAL_STOPWORDS and not fn.isupper()),
@@ -361,7 +341,10 @@ def redact_names_in_text(
             reverse=True,
         )
         if safe_firsts:
-            fn_rx = re.compile(r"(?<!\w)(?!ASHA\b)(?:" + "|".join(re.escape(f) for f in safe_firsts) + r")(?:'s)?(?!\w)")
+            fn_rx = re.compile(
+                r"(?<!\w)(?!(?-i:ASHA)\b)(?:" + "|".join(re.escape(f) for f in safe_firsts) + r")(?:'s)?(?!\w)",
+                re.IGNORECASE,
+            )
             work, n_fn = fn_rx.subn("[PATIENT_NAME]", work)
             count += n_fn
 
