@@ -92,28 +92,28 @@ CLINICAL_SAFE_COLS = re.compile(
 )
 
 
+from functools import lru_cache
+
+_PII_SAFE_OVERRIDE_1 = re.compile(r"\b(patient|beneficiary|relative|mobile|phone|aadhaar|abha|pan|dob|address|pin|postal)\b")
+_PII_SAFE_OVERRIDE_2 = re.compile(r"\b(patient|beneficiary|relative|mobile|phone|aadhaar|abha|pan|dob|address)\b")
+
+
+@lru_cache(maxsize=4096)
 def is_clinical_safe_field(name: str) -> bool:
     """Return True if the column/key name is a clinical/numeric field where PIN/Ward regexes must not run."""
     nk = norm_key(name)
     if not nk:
         return False
-    return bool(
-        CLINICAL_SAFE_COLS.search(nk)
-        and not re.search(
-            r"\b(patient|beneficiary|relative|mobile|phone|aadhaar|abha|pan|dob|address|pin|postal)\b",
-            nk,
-        )
-    )
+    return bool(CLINICAL_SAFE_COLS.search(nk) and not _PII_SAFE_OVERRIDE_1.search(nk))
 
 
+@lru_cache(maxsize=4096)
 def classify_field(name: str) -> str | None:
     """Return semantic PII/QI type for a column header or JSON key, or None."""
     nk = norm_key(name)
     if not nk:
         return None
-    if CLINICAL_SAFE_COLS.search(nk) and not re.search(
-        r"\b(patient|beneficiary|relative|mobile|phone|aadhaar|abha|pan|dob|address)\b", nk
-    ):
+    if CLINICAL_SAFE_COLS.search(nk) and not _PII_SAFE_OVERRIDE_2.search(nk):
         return None
     for kind, rx in _COL_RULES:
         if rx.search(nk):
