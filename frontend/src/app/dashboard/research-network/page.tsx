@@ -1,7 +1,11 @@
 "use client";
+
 import { useEffect, useState } from "react";
 import { api, type ResearchRequest } from "@/lib/api";
-import { Plus, Check, X, AlertTriangle } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState, ErrorState } from "@/components/ui/StatePanels";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { Plus, Check, X } from "lucide-react";
 
 export default function ResearchNetworkPage() {
   const [requests, setRequests] = useState<ResearchRequest[]>([]);
@@ -48,52 +52,25 @@ export default function ResearchNetworkPage() {
   }
 
   return (
-    <div style={{ padding: "32px 36px" }}>
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: "#050505", letterSpacing: "-0.8px", marginBottom: 4 }}>
-          Research Network
-        </h1>
-        <p style={{ fontSize: 13.5, color: "#777777" }}>
-          Governed data-access requests for sanitised outputs. Raw patient-level data is never exposed.
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="10 · INSTITUTIONAL COLLABORATION"
+        title="Research Network"
+        subtitle="Governed data-access requests for sanitised research outputs. Raw patient-level data is never exposed."
+      />
 
-      {error && (
-        <div
-          style={{
-            padding: "12px 16px",
-            background: "#FFFBF0",
-            border: "1.5px solid #E6D5A0",
-            borderRadius: 8,
-            fontSize: 13,
-            color: "#7A5C00",
-            marginBottom: 20,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
-          <AlertTriangle size={15} />
-          {error}
-        </div>
-      )}
+      {error && <ErrorState message={error} />}
 
       <form
         onSubmit={handleCreate}
-        style={{
-          background: "#FFFFFF",
-          border: "1.5px solid #DCDCDC",
-          borderRadius: 10,
-          padding: 22,
-          marginBottom: 28,
-        }}
+        className="bg-white border border-[#DADADA] rounded-2xl p-6"
       >
-        <div style={{ fontSize: 14, fontWeight: 600, color: "#050505", marginBottom: 14 }}>
+        <h2 className="text-[15px] font-semibold text-[#090909] mb-4">
           Submit Research Collaboration Request
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1.5fr auto", gap: 12, alignItems: "end" }}>
-          <div>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#555555", marginBottom: 5 }}>
+        </h2>
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+          <div className="md:col-span-3">
+            <label className="block text-[12px] font-medium text-[#666666] mb-1">
               Study Title
             </label>
             <input
@@ -101,11 +78,11 @@ export default function ResearchNetworkPage() {
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Cardiology Cohort 2026"
               required
-              style={{ width: "100%", padding: "9px 12px", border: "1.5px solid #DCDCDC", borderRadius: 7, fontSize: 13.5, background: "#FAFAFA" }}
+              className="w-full px-3 py-2 rounded-lg bg-[#F4F4F2]/60 border border-[#DADADA] text-[13.5px] focus:outline-none focus:border-[#090909]"
             />
           </div>
-          <div>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#555555", marginBottom: 5 }}>
+          <div className="md:col-span-3">
+            <label className="block text-[12px] font-medium text-[#666666] mb-1">
               Institution
             </label>
             <input
@@ -113,108 +90,89 @@ export default function ResearchNetworkPage() {
               onChange={(e) => setInstitution(e.target.value)}
               placeholder="AIIMS Research"
               required
-              style={{ width: "100%", padding: "9px 12px", border: "1.5px solid #DCDCDC", borderRadius: 7, fontSize: 13.5, background: "#FAFAFA" }}
+              className="w-full px-3 py-2 rounded-lg bg-[#F4F4F2]/60 border border-[#DADADA] text-[13.5px] focus:outline-none focus:border-[#090909]"
             />
           </div>
-          <div>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#555555", marginBottom: 5 }}>
+          <div className="md:col-span-4">
+            <label className="block text-[12px] font-medium text-[#666666] mb-1">
               Purpose
             </label>
             <input
               value={purpose}
               onChange={(e) => setPurpose(e.target.value)}
               placeholder="Longitudinal HbA1c outcome analysis"
-              style={{ width: "100%", padding: "9px 12px", border: "1.5px solid #DCDCDC", borderRadius: 7, fontSize: 13.5, background: "#FAFAFA" }}
+              className="w-full px-3 py-2 rounded-lg bg-[#F4F4F2]/60 border border-[#DADADA] text-[13.5px] focus:outline-none focus:border-[#090909]"
             />
           </div>
-          <button
-            type="submit"
-            disabled={submitting}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "10px 18px",
-              background: "#050505",
-              color: "#FFFFFF",
-              border: "none",
-              borderRadius: 7,
-              fontSize: 13.5,
-              fontWeight: 600,
-              cursor: submitting ? "not-allowed" : "pointer",
-            }}
-          >
-            <Plus size={14} />
-            Submit
-          </button>
+          <div className="md:col-span-2">
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-[#090909] text-white text-[13px] font-medium hover:bg-[#222222] disabled:opacity-50"
+            >
+              <Plus size={14} />
+              <span>Submit</span>
+            </button>
+          </div>
         </div>
       </form>
 
-      <div style={{ background: "#FFFFFF", border: "1.5px solid #DCDCDC", borderRadius: 10, overflow: "hidden" }}>
-        <div style={{ padding: "14px 20px", borderBottom: "1px solid #EEEEEE", fontSize: 14, fontWeight: 600, color: "#050505" }}>
-          Collaboration Requests ({requests.length})
+      <div className="bg-white border border-[#DADADA] rounded-2xl overflow-hidden">
+        <div className="px-6 py-4 border-b border-[#E5E5E5]">
+          <h2 className="text-[15px] font-semibold text-[#090909]">
+            Collaboration Requests ({requests.length})
+          </h2>
         </div>
+
         {requests.length === 0 ? (
-          <div style={{ padding: 40, textAlign: "center", fontSize: 13, color: "#777777" }}>
-            No research requests yet.
+          <div className="p-6">
+            <EmptyState
+              title="No research requests yet"
+              description="Submit a research collaboration request above to initiate approval governance."
+            />
           </div>
         ) : (
-          requests.map((r) => {
-            const st = r.status.toUpperCase();
-            return (
-              <div
-                key={r.id}
-                style={{
-                  padding: "16px 20px",
-                  borderBottom: "1px solid #EEEEEE",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 16,
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: "#050505" }}>{r.title}</div>
-                  <div style={{ fontSize: 12.5, color: "#777777", marginTop: 2 }}>
-                    {r.requestor_org} {r.purpose ? `· ${r.purpose}` : ""}
+          <div className="divide-y divide-[#E5E5E5]">
+            {requests.map((r) => {
+              const st = r.status.toUpperCase();
+              return (
+                <div
+                  key={r.id}
+                  className="px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+                >
+                  <div>
+                    <div className="text-[14px] font-semibold text-[#090909]">{r.title}</div>
+                    <div className="text-[12.5px] text-[#666666] mt-0.5">
+                      {r.requestor_org} {r.purpose ? `· ${r.purpose}` : ""}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <StatusBadge status={st} />
+                    {(st === "SUBMITTED" || st === "PENDING" || st === "UNDER_REVIEW") && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleAction(r.id, "approve")}
+                          aria-label="Approve request"
+                          className="p-1.5 rounded-lg border border-[#DADADA] bg-white hover:bg-[#F4F4F2] text-[#090909]"
+                        >
+                          <Check size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAction(r.id, "reject")}
+                          aria-label="Reject request"
+                          className="p-1.5 rounded-lg border border-[#DADADA] bg-white hover:bg-[#FDF2F2] text-[#7F1D1D]"
+                        >
+                          <X size={14} />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span
-                    style={{
-                      padding: "3px 8px",
-                      borderRadius: 4,
-                      fontSize: 10.5,
-                      fontWeight: 600,
-                      textTransform: "uppercase",
-                      background: st === "APPROVED" ? "#050505" : st === "REJECTED" ? "#FFE5E5" : "#E6E6E6",
-                      color: st === "APPROVED" ? "#FFFFFF" : st === "REJECTED" ? "#CC3333" : "#050505",
-                    }}
-                  >
-                    {st}
-                  </span>
-                  {(st === "SUBMITTED" || st === "PENDING" || st === "UNDER_REVIEW") && (
-                    <>
-                      <button
-                        onClick={() => handleAction(r.id, "approve")}
-                        title="Approve"
-                        style={{ padding: 6, border: "1px solid #DCDCDC", borderRadius: 6, background: "#FFFFFF", cursor: "pointer", color: "#050505" }}
-                      >
-                        <Check size={14} />
-                      </button>
-                      <button
-                        onClick={() => handleAction(r.id, "reject")}
-                        title="Reject"
-                        style={{ padding: 6, border: "1px solid #DCDCDC", borderRadius: 6, background: "#FFFFFF", cursor: "pointer", color: "#CC3333" }}
-                      >
-                        <X size={14} />
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            );
-          })
+              );
+            })}
+          </div>
         )}
       </div>
     </div>

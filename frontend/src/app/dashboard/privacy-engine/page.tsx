@@ -1,14 +1,22 @@
 "use client";
+
 import { useEffect, useState } from "react";
 import { api, type JobRecord, type SettingsData } from "@/lib/api";
-import { Shield, Cpu, Lock, CheckCircle2, ArrowRight, AlertTriangle } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState, ErrorState } from "@/components/ui/StatePanels";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
 
-const PIPELINE_STAGES = [
-  { step: "01", title: "VALIDATING", desc: "Checks dataset readability, formats, and byte integrity." },
-  { step: "02", title: "PROCESSING", desc: "Executes offline deterministic starter/main.py privacy engine." },
-  { step: "03", title: "PRIVACY_ANALYSIS", desc: "Measures PII detection, canary containment, and residual risk." },
-  { step: "04", title: "CLINICAL_VALIDATION", desc: "Verifies lab values, units, and FHIR R4 bundle integrity." },
-  { step: "05", title: "SECURITY_VALIDATION", desc: "Runs 7-vector attack simulator & emits Privacy Passport." },
+const ENGINE_STAGES = [
+  "01. Input validation",
+  "02. Secure ingestion",
+  "03. Format detection",
+  "04. Multilingual PII detection",
+  "05. Clinical preservation",
+  "06. Identity resolution",
+  "07. Pseudonymisation",
+  "08. Re-identification risk analysis",
+  "09. Security validation",
+  "10. Release decision",
 ];
 
 export default function PrivacyEnginePage() {
@@ -26,136 +34,99 @@ export default function PrivacyEnginePage() {
   }, []);
 
   return (
-    <div style={{ padding: "32px 36px" }}>
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: "#050505", letterSpacing: "-0.8px", marginBottom: 4 }}>
-          Privacy Engine
-        </h1>
-        <p style={{ fontSize: 13.5, color: "#777777" }}>
-          Offline, CPU-only deterministic sanitisation pipeline architecture and persistent job history.
-        </p>
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="03 · DETERMINISTIC PIPELINE"
+        title="Privacy Engine"
+        subtitle="Offline, CPU-only sanitisation workflow and persistent processing job history."
+      />
+
+      {error && <ErrorState message={error} />}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          { label: "Execution Mode", value: "CPU-Only", sub: "Air-gapped · Zero LLMs" },
+          {
+            label: "RAKSHA_SECRET",
+            value: settings ? (settings.raksha_secret_set ? "Configured" : "Fallback") : "—",
+            sub: "HMAC-SHA256 pseudonym key",
+          },
+          { label: "Total Jobs", value: String(jobs.length), sub: "Persistent SQLite history" },
+          {
+            label: "Multilingual NLP",
+            value: settings ? (settings.multilingual_enabled ? "Enabled" : "Disabled") : "—",
+            sub: `Output: ${settings?.output_format ?? "—"}`,
+          },
+        ].map((card) => (
+          <div key={card.label} className="bg-white border border-[#DADADA] rounded-2xl p-5">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888] mb-2">
+              {card.label}
+            </div>
+            <div className="font-serif-display text-[28px] leading-none text-[#090909]">
+              {card.value}
+            </div>
+            <div className="text-[12px] text-[#666666] mt-2">{card.sub}</div>
+          </div>
+        ))}
       </div>
 
-      {error && (
-        <div
-          style={{
-            padding: "12px 16px",
-            background: "#FFFBF0",
-            border: "1.5px solid #E6D5A0",
-            borderRadius: 8,
-            fontSize: 13,
-            color: "#7A5C00",
-            marginBottom: 20,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
-          <AlertTriangle size={15} />
-          {error}
-        </div>
-      )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 16, marginBottom: 28 }}>
-        <div style={{ background: "#FFFFFF", border: "1.5px solid #DCDCDC", borderRadius: 10, padding: "18px 20px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span style={{ fontSize: 12, color: "#777777", fontWeight: 500 }}>Execution Mode</span>
-            <Cpu size={15} color="#050505" />
-          </div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: "#050505" }}>CPU-Only · Offline</div>
-          <div style={{ fontSize: 11.5, color: "#777777", marginTop: 4 }}>Decoupled from web auth</div>
-        </div>
-
-        <div style={{ background: "#FFFFFF", border: "1.5px solid #DCDCDC", borderRadius: 10, padding: "18px 20px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span style={{ fontSize: 12, color: "#777777", fontWeight: 500 }}>RAKSHA_SECRET</span>
-            <Lock size={15} color="#050505" />
-          </div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: "#050505" }}>
-            {settings ? (settings.raksha_secret_set ? "Configured" : "Fallback Practice Key") : "—"}
-          </div>
-          <div style={{ fontSize: 11.5, color: "#777777", marginTop: 4 }}>HMAC-SHA256 pseudonym key</div>
-        </div>
-
-        <div style={{ background: "#FFFFFF", border: "1.5px solid #DCDCDC", borderRadius: 10, padding: "18px 20px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span style={{ fontSize: 12, color: "#777777", fontWeight: 500 }}>Total Jobs</span>
-            <Shield size={15} color="#050505" />
-          </div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: "#050505" }}>{jobs.length}</div>
-          <div style={{ fontSize: 11.5, color: "#777777", marginTop: 4 }}>Persistent SQLite history</div>
-        </div>
-
-        <div style={{ background: "#FFFFFF", border: "1.5px solid #DCDCDC", borderRadius: 10, padding: "18px 20px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span style={{ fontSize: 12, color: "#777777", fontWeight: 500 }}>Multilingual NLP</span>
-            <CheckCircle2 size={15} color="#050505" />
-          </div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: "#050505" }}>
-            {settings ? (settings.multilingual_enabled ? "Enabled" : "Disabled") : "—"}
-          </div>
-          <div style={{ fontSize: 11.5, color: "#777777", marginTop: 4 }}>
-            Output: {settings?.output_format ?? "—"}
-          </div>
-        </div>
-      </div>
-
-      {/* Pipeline stages */}
-      <div style={{ background: "#FFFFFF", border: "1.5px solid #DCDCDC", borderRadius: 10, padding: 24, marginBottom: 28 }}>
-        <div style={{ fontSize: 15, fontWeight: 600, color: "#050505", marginBottom: 20 }}>
-          Connected Processing Lifecycle
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
-          {PIPELINE_STAGES.map((stage, idx) => (
-            <div key={stage.step} style={{ background: "#F2F2F2", border: "1px solid #E6E6E6", borderRadius: 8, padding: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, background: "#050505", color: "#FFFFFF", padding: "2px 7px", borderRadius: 4 }}>
-                  {stage.step}
-                </span>
-                {idx < PIPELINE_STAGES.length - 1 && <ArrowRight size={13} color="#777777" />}
-              </div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#050505", marginBottom: 6 }}>{stage.title}</div>
-              <div style={{ fontSize: 12, color: "#666666", lineHeight: 1.5 }}>{stage.desc}</div>
+      {/* 10-Stage Workflow */}
+      <div className="bg-white border border-[#DADADA] rounded-2xl p-6">
+        <h2 className="text-[15px] font-semibold text-[#090909] mb-4">
+          10-Stage Deterministic Processing Architecture
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          {ENGINE_STAGES.map((stage) => (
+            <div
+              key={stage}
+              className="px-3.5 py-3 rounded-xl bg-[#F4F4F2] border border-[#E5E5E5] text-[12.5px] font-medium text-[#090909]"
+            >
+              {stage}
             </div>
           ))}
         </div>
       </div>
 
-      {/* Jobs table */}
-      <div style={{ background: "#FFFFFF", border: "1.5px solid #DCDCDC", borderRadius: 10, overflow: "hidden" }}>
-        <div style={{ padding: "14px 20px", borderBottom: "1px solid #EEEEEE", fontSize: 14, fontWeight: 600, color: "#050505" }}>
-          Processing Jobs
+      {/* Jobs Table */}
+      <div className="bg-white border border-[#DADADA] rounded-2xl overflow-hidden">
+        <div className="px-6 py-4 border-b border-[#E5E5E5]">
+          <h2 className="text-[15px] font-semibold text-[#090909]">Processing Jobs</h2>
         </div>
-        {jobs.length > 0 ? (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid #EEEEEE" }}>
-                {["Job ID", "Dataset", "Stage / Status", "Release Decision", "Files", "Records", "Created"].map((h) => (
-                  <th key={h} style={{ padding: "10px 16px", textAlign: "left", fontSize: 11.5, color: "#777777" }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {jobs.map((j) => (
-                <tr key={j.id} style={{ borderBottom: "1px solid #F5F5F5" }}>
-                  <td style={{ padding: "11px 16px", fontSize: 12, fontFamily: "monospace", color: "#050505" }}>{j.id}</td>
-                  <td style={{ padding: "11px 16px", fontSize: 13, color: "#333333" }}>{j.dataset_name || j.input_name || "—"}</td>
-                  <td style={{ padding: "11px 16px", fontSize: 12, fontWeight: 600 }}>{j.status}</td>
-                  <td style={{ padding: "11px 16px", fontSize: 12, fontWeight: 600 }}>{j.release_decision || "PENDING"}</td>
-                  <td style={{ padding: "11px 16px", fontSize: 13, color: "#555555" }}>{j.files_total ?? 0}</td>
-                  <td style={{ padding: "11px 16px", fontSize: 13, color: "#555555" }}>{j.records_processed ?? 0}</td>
-                  <td style={{ padding: "11px 16px", fontSize: 12, color: "#777777" }}>
-                    {new Date(j.created_at * 1000).toLocaleString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {jobs.length === 0 ? (
+          <div className="p-6">
+            <EmptyState
+              title="No processing jobs recorded"
+              description="Upload a dataset to execute the 10-stage offline privacy engine."
+            />
+          </div>
         ) : (
-          <div style={{ padding: "40px 20px", textAlign: "center", fontSize: 13, color: "#777777" }}>
-            No pipeline executions recorded yet.
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-[#E5E5E5] bg-[#F4F4F2]/60">
+                  {["Job ID", "Dataset", "Status", "Release", "Files", "Records", "Created"].map((h) => (
+                    <th key={h} className="px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.05em] text-[#666666]">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#E5E5E5]">
+                {jobs.map((j) => (
+                  <tr key={j.id} className="hover:bg-[#F4F4F2]/40">
+                    <td className="px-5 py-3 text-[12px] font-mono text-[#090909]">{j.id}</td>
+                    <td className="px-5 py-3 text-[13px] text-[#090909]">{j.dataset_name || j.input_name || "—"}</td>
+                    <td className="px-5 py-3"><StatusBadge status={j.status} /></td>
+                    <td className="px-5 py-3"><StatusBadge status={j.release_decision || "PENDING"} /></td>
+                    <td className="px-5 py-3 text-[13px]">{j.files_total ?? 0}</td>
+                    <td className="px-5 py-3 text-[13px]">{j.records_processed ?? 0}</td>
+                    <td className="px-5 py-3 text-[12px] text-[#666666] whitespace-nowrap">
+                      {new Date(j.created_at * 1000).toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

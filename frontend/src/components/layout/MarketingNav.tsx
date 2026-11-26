@@ -1,4 +1,5 @@
 "use client";
+
 import Link from "next/link";
 import Image from "next/image";
 import { useState } from "react";
@@ -14,153 +15,79 @@ export default function MarketingNav() {
   const [open, setOpen] = useState(false);
 
   return (
-    <header
-      style={{
-        position: "sticky",
-        top: 0,
-        zIndex: 50,
-        background: "#FFFFFF",
-        borderBottom: "1px solid #DCDCDC",
-      }}
-    >
-      <div
-        style={{
-          maxWidth: 1200,
-          margin: "0 auto",
-          padding: "0 24px",
-          height: 60,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        {/* Logo */}
-        <Link
-          href="/"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            textDecoration: "none",
-          }}
-        >
+    <header className="sticky top-0 z-40 bg-[#F4F4F2]/95 backdrop-blur-sm border-b border-[#E5E5E5]">
+      <div className="max-w-[1160px] mx-auto px-6 h-16 flex items-center justify-between gap-6">
+        {/* Left: Logo + Wordmark */}
+        <Link href="/" className="flex items-center gap-2.5 shrink-0">
           <Image
             src="/medilocker-logo.jpg"
             alt="MediLocker"
-            width={30}
-            height={30}
-            style={{ borderRadius: "50%" }}
+            width={28}
+            height={28}
+            className="rounded-full"
           />
-          <span
-            style={{
-              fontWeight: 600,
-              fontSize: 16,
-              color: "#050505",
-              letterSpacing: "-0.3px",
-            }}
-          >
+          <span className="font-serif-display text-[19px] tracking-[-0.01em] text-[#090909]">
             MediLocker
           </span>
         </Link>
 
-        {/* Desktop Nav */}
-        <nav
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 32,
-          }}
-          className="hidden-mobile"
-        >
+        {/* Centre: Links */}
+        <nav className="hidden md:flex items-center gap-8" aria-label="Primary">
           {NAV_LINKS.map((l) => (
             <Link
               key={l.href}
               href={l.href}
-              style={{
-                fontSize: 14,
-                color: "#555555",
-                textDecoration: "none",
-                fontWeight: 400,
-              }}
+              className="text-[13.5px] text-[#666666] hover:text-[#090909] transition-colors"
             >
               {l.label}
             </Link>
           ))}
         </nav>
 
-        {/* CTA */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {/* Right: Actions */}
+        <div className="flex items-center gap-4 shrink-0">
           <Link
             href="/login"
-            style={{
-              fontSize: 14,
-              color: "#050505",
-              textDecoration: "none",
-              fontWeight: 500,
-            }}
+            className="hidden sm:inline-block text-[13.5px] font-medium text-[#090909] hover:text-[#666666] transition-colors"
           >
             Sign in
           </Link>
           <Link
             href="/register"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "8px 18px",
-              background: "#050505",
-              color: "#FFFFFF",
-              borderRadius: 6,
-              textDecoration: "none",
-              fontSize: 14,
-              fontWeight: 500,
-            }}
+            className="px-4 py-2 rounded-full bg-[#090909] text-white text-[13px] font-medium hover:bg-[#222222] transition-colors"
           >
-            Get Started
+            Get started
           </Link>
           <button
-            onClick={() => setOpen(!open)}
-            style={{
-              display: "none",
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              color: "#050505",
-              padding: 4,
-            }}
-            aria-label="Menu"
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-label="Toggle menu"
+            className="md:hidden p-1.5 rounded-lg border border-[#DADADA] text-[#090909]"
           >
-            {open ? <X size={20} /> : <Menu size={20} />}
+            {open ? <X size={18} /> : <Menu size={18} />}
           </button>
         </div>
       </div>
 
-      {/* Mobile menu */}
       {open && (
-        <div
-          style={{
-            borderTop: "1px solid #DCDCDC",
-            background: "#FFFFFF",
-            padding: "12px 24px 20px",
-          }}
-        >
+        <div className="md:hidden border-t border-[#E5E5E5] bg-[#F4F4F2] px-6 py-4 space-y-3">
           {NAV_LINKS.map((l) => (
             <Link
               key={l.href}
               href={l.href}
               onClick={() => setOpen(false)}
-              style={{
-                display: "block",
-                padding: "10px 0",
-                fontSize: 15,
-                color: "#050505",
-                textDecoration: "none",
-                borderBottom: "1px solid #EEEEEE",
-              }}
+              className="block text-[14px] text-[#090909] py-1"
             >
               {l.label}
             </Link>
           ))}
+          <Link
+            href="/login"
+            onClick={() => setOpen(false)}
+            className="block text-[14px] font-medium text-[#090909] py-1"
+          >
+            Sign in
+          </Link>
         </div>
       )}
     </header>

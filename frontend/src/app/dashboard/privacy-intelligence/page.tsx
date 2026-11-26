@@ -1,155 +1,114 @@
 "use client";
+
 import { useEffect, useState } from "react";
 import { api, type PrivacyIntelligence } from "@/lib/api";
-import { Brain, AlertTriangle, Download } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState, ErrorState } from "@/components/ui/StatePanels";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
 
 export default function PrivacyIntelligencePage() {
   const [intel, setIntel] = useState<PrivacyIntelligence | null>(null);
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
     api.privacyIntelligence().then(setIntel).catch((e) => setError(e.message));
   }, []);
 
+  const measured = intel?.status === "MEASURED";
+
   return (
-    <div style={{ padding: "32px 36px" }}>
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: "#050505", letterSpacing: "-0.8px", marginBottom: 4 }}>
-          Privacy Intelligence
-        </h1>
-        <p style={{ fontSize: 13.5, color: "#777777" }}>
-          Measured PII detection, residual leakage assessments, and canary containment status.
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="04 · RISK & LEAKAGE TELEMETRY"
+        title="Privacy Intelligence"
+        subtitle="Measured PII detection, residual leakage checks, quasi-identifier risk, and release eligibility."
+      />
 
-      {error && (
-        <div
-          style={{
-            padding: "12px 16px",
-            background: "#FFFBF0",
-            border: "1.5px solid #E6D5A0",
-            borderRadius: 8,
-            fontSize: 13,
-            color: "#7A5C00",
-            marginBottom: 20,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
-          <AlertTriangle size={15} />
-          {error}
-        </div>
-      )}
+      {error && <ErrorState message={error} />}
 
-      {/* Summary */}
-      <div
-        style={{
-          background: "#050505",
-          color: "#FFFFFF",
-          borderRadius: 10,
-          padding: "22px 26px",
-          marginBottom: 24,
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          gap: 16,
-          alignItems: "center",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <Brain size={22} color="#FFFFFF" />
-          <div>
-            <div style={{ fontSize: 11, color: "#888888", textTransform: "uppercase" }}>Status</div>
-            <div style={{ fontSize: 20, fontWeight: 700 }}>{intel?.status ?? "—"}</div>
+      <div className="bg-[#090909] text-white rounded-2xl p-6 sm:p-7 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div>
+          <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#888888] mb-1.5">
+            Assessment Status
+          </div>
+          <div className="font-serif-display text-[28px] leading-none">
+            {intel?.status ?? "NOT_MEASURED"}
           </div>
         </div>
         <div>
-          <div style={{ fontSize: 11, color: "#888888", textTransform: "uppercase" }}>Total PII Detected</div>
-          <div style={{ fontSize: 22, fontWeight: 700 }}>
-            {intel?.status === "MEASURED" ? intel.total_pii_detected : "Not measured"}
+          <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#888888] mb-1.5">
+            Total PII Detected
+          </div>
+          <div className="font-serif-display text-[28px] leading-none">
+            {measured ? intel.total_pii_detected : "Not measured"}
           </div>
         </div>
         <div>
-          <div style={{ fontSize: 11, color: "#888888", textTransform: "uppercase" }}>Residual Leakage</div>
-          <div style={{ fontSize: 22, fontWeight: 700 }}>
-            {intel?.status === "MEASURED" ? intel.total_residual_leakage : "Not measured"}
+          <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#888888] mb-1.5">
+            Residual Leakage
+          </div>
+          <div className="font-serif-display text-[28px] leading-none">
+            {measured ? intel.total_residual_leakage : "Not measured"}
           </div>
         </div>
         <div>
-          <div style={{ fontSize: 11, color: "#888888", textTransform: "uppercase" }}>Canary Containment</div>
-          <div style={{ fontSize: 20, fontWeight: 700 }}>{intel?.canary_status ?? "NOT_RUN"}</div>
+          <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#888888] mb-1.5">
+            Canary Containment
+          </div>
+          <div className="font-serif-display text-[28px] leading-none">
+            {intel?.canary_status ?? "NOT_RUN"}
+          </div>
         </div>
       </div>
 
-      {/* Assessments table */}
-      <div style={{ background: "#FFFFFF", border: "1.5px solid #DCDCDC", borderRadius: 10, overflow: "hidden" }}>
-        <div style={{ padding: "14px 20px", borderBottom: "1px solid #EEEEEE", fontSize: 14, fontWeight: 600, color: "#050505" }}>
-          Measured Privacy Assessments ({intel?.assessments?.length ?? 0})
+      <div className="bg-white border border-[#DADADA] rounded-2xl overflow-hidden">
+        <div className="px-6 py-4 border-b border-[#E5E5E5]">
+          <h2 className="text-[15px] font-semibold text-[#090909]">
+            Measured Privacy Assessments ({intel?.assessments.length ?? 0})
+          </h2>
         </div>
-        {intel && intel.assessments.length > 0 ? (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid #EEEEEE" }}>
-                {["Assessment ID", "Job ID", "PII Detected", "Residual Leaks", "Canary", "QI Risk", "Release Eligible", ""].map((h) => (
-                  <th key={h} style={{ padding: "10px 16px", textAlign: "left", fontSize: 11.5, color: "#777777" }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {intel.assessments.map((a) => (
-                <tr key={a.id} style={{ borderBottom: "1px solid #F5F5F5" }}>
-                  <td style={{ padding: "11px 16px", fontSize: 12, fontFamily: "monospace" }}>{a.id}</td>
-                  <td style={{ padding: "11px 16px", fontSize: 12, fontFamily: "monospace" }}>{a.job_id}</td>
-                  <td style={{ padding: "11px 16px", fontSize: 13, fontWeight: 600 }}>{a.pii_detected}</td>
-                  <td style={{ padding: "11px 16px", fontSize: 13 }}>{a.residual_leakage}</td>
-                  <td style={{ padding: "11px 16px", fontSize: 12, fontWeight: 600 }}>
-                    {a.canary_status} ({a.canary_leaks}/{a.canary_planted})
-                  </td>
-                  <td style={{ padding: "11px 16px", fontSize: 13 }}>{a.qi_risk_score}% ({a.reid_risk_level})</td>
-                  <td style={{ padding: "11px 16px", fontSize: 12, fontWeight: 600 }}>
-                    {a.release_eligible ? "YES" : "NO"}
-                  </td>
-                  <td style={{ padding: "11px 16px", textAlign: "right" }}>
-                    <button
-                      disabled={downloadingId === a.id}
-                      onClick={async () => {
-                        setDownloadingId(a.id);
-                        setError("");
-                        try {
-                          await api.downloadPdf(api.downloadAssessmentPdfUrl(a.id), `MediLocker_Privacy_Intelligence_${a.id}.pdf`);
-                        } catch (e: unknown) {
-                          setError(e instanceof Error ? e.message : String(e));
-                        }
-                        setDownloadingId(null);
-                      }}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        padding: "5px 10px",
-                        background: "#050505",
-                        color: "#FFFFFF",
-                        border: "none",
-                        borderRadius: 5,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        cursor: downloadingId === a.id ? "wait" : "pointer",
-                      }}
-                    >
-                      <Download size={12} />
-                      {downloadingId === a.id ? "Generating…" : "Export Assessment PDF"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {!intel || intel.assessments.length === 0 ? (
+          <div className="p-6">
+            <EmptyState
+              title="No privacy assessments measured"
+              description="Upload and process a dataset to generate real PII detection and risk assessments."
+            />
+          </div>
         ) : (
-          <div style={{ padding: "40px 20px", textAlign: "center", fontSize: 13, color: "#777777" }}>
-            No privacy assessments recorded yet. Upload and process a dataset first.
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-[#E5E5E5] bg-[#F4F4F2]/60">
+                  {["Assessment", "Job ID", "PII Detected", "Residual Leaks", "Canary", "QI Risk", "Eligible"].map((h) => (
+                    <th key={h} className="px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.05em] text-[#666666]">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#E5E5E5]">
+                {intel.assessments.map((a) => (
+                  <tr key={a.id} className="hover:bg-[#F4F4F2]/40">
+                    <td className="px-5 py-3 text-[12px] font-mono text-[#090909]">{a.id}</td>
+                    <td className="px-5 py-3 text-[12px] font-mono text-[#666666]">{a.job_id}</td>
+                    <td className="px-5 py-3 text-[13px] font-semibold">{a.pii_detected}</td>
+                    <td className="px-5 py-3 text-[13px]">{a.residual_leakage}</td>
+                    <td className="px-5 py-3">
+                      <StatusBadge status={a.canary_status} />{" "}
+                      <span className="text-[11.5px] text-[#666666] ml-1">
+                        ({a.canary_leaks}/{a.canary_planted})
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 text-[13px]">
+                      {a.qi_risk_score}% ({a.reid_risk_level})
+                    </td>
+                    <td className="px-5 py-3">
+                      <StatusBadge status={a.release_eligible ? "PASS" : "BLOCKED"} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

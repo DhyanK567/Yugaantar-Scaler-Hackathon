@@ -1,15 +1,11 @@
 "use client";
+
 import { useEffect, useRef, useState } from "react";
 import { api, type Dataset, type JobRecord, type Organisation } from "@/lib/api";
-import {
-  Upload,
-  Download,
-  RefreshCw,
-  AlertTriangle,
-  CheckCircle2,
-  Loader2,
-  Trash2,
-} from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { ConfirmationDialog, EmptyState, ErrorState } from "@/components/ui/StatePanels";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { Upload, Download, RefreshCw, CheckCircle2, Loader2, Trash2 } from "lucide-react";
 
 export default function DatasetsPage() {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
@@ -17,6 +13,7 @@ export default function DatasetsPage() {
   const [selectedOrg, setSelectedOrg] = useState("");
   const [activeJob, setActiveJob] = useState<JobRecord | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -29,9 +26,6 @@ export default function DatasetsPage() {
         if (list.length > 0 && !selectedOrg) setSelectedOrg(list[0].id);
       })
       .catch(() => {});
-    if (activeJob) {
-      api.getJob(activeJob.id).then(setActiveJob).catch(() => {});
-    }
   }
 
   useEffect(() => {
@@ -78,49 +72,31 @@ export default function DatasetsPage() {
     if (fileRef.current) fileRef.current.value = "";
   }
 
-  async function handleDelete(id: string) {
+  async function confirmDelete() {
+    if (!deleteId) return;
     try {
-      await api.deleteDataset(id);
+      await api.deleteDataset(deleteId);
+      setDeleteId(null);
       loadAll();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
+      setDeleteId(null);
     }
   }
 
   return (
-    <div style={{ padding: "32px 36px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24 }}>
-        <div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: "#050505", letterSpacing: "-0.8px", marginBottom: 4 }}>
-            Datasets
-          </h1>
-          <p style={{ fontSize: 13.5, color: "#777777" }}>
-            Upload synthetic healthcare datasets to initiate the deterministic privacy pipeline.
-          </p>
-        </div>
-
-        {orgs.length > 0 && (
-          <div>
-            <label style={{ display: "block", fontSize: 11, color: "#777777", marginBottom: 4 }}>
-              Target Organisation
-            </label>
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="02 · DATASET INGESTION"
+        title="Datasets"
+        subtitle="Upload synthetic healthcare datasets to initiate the offline deterministic privacy pipeline."
+        actions={
+          orgs.length > 0 ? (
             <select
               value={selectedOrg}
-              onChange={(e) => {
-                const nextOrg = e.target.value;
-                setSelectedOrg(nextOrg);
-                if (activeJob && activeJob.organisation_id && activeJob.organisation_id !== nextOrg) {
-                  setActiveJob(null);
-                }
-              }}
-              style={{
-                padding: "8px 12px",
-                border: "1.5px solid #DCDCDC",
-                borderRadius: 7,
-                fontSize: 13,
-                background: "#FFFFFF",
-                color: "#050505",
-              }}
+              onChange={(e) => setSelectedOrg(e.target.value)}
+              aria-label="Target Organisation"
+              className="px-3 py-2 rounded-lg bg-white border border-[#DADADA] text-[13px] font-medium text-[#090909] focus:outline-none focus:border-[#090909]"
             >
               {orgs.map((o) => (
                 <option key={o.id} value={o.id}>
@@ -128,239 +104,144 @@ export default function DatasetsPage() {
                 </option>
               ))}
             </select>
-          </div>
-        )}
-      </div>
+          ) : undefined
+        }
+      />
 
-      {/* Upload zone */}
+      {error && <ErrorState message={error} />}
+
+      {/* Minimal Upload Dropzone */}
       <div
-        style={{
-          border: "2px dashed #DCDCDC",
-          borderRadius: 10,
-          padding: "36px 24px",
-          textAlign: "center",
-          background: "#FFFFFF",
-          marginBottom: 24,
-          cursor: "pointer",
-        }}
         onClick={() => fileRef.current?.click()}
+        className="bg-white border border-dashed border-[#090909]/40 hover:border-[#090909] rounded-2xl p-10 text-center cursor-pointer transition-colors"
       >
-        <div
-          style={{
-            width: 44,
-            height: 44,
-            background: "#F2F2F2",
-            borderRadius: 10,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            margin: "0 auto 14px",
-          }}
-        >
-          <Upload size={20} color="#050505" />
+        <div className="w-12 h-12 rounded-full bg-[#F4F4F2] border border-[#E5E5E5] flex items-center justify-center mx-auto mb-4">
+          <Upload size={20} className="text-[#090909]" />
         </div>
-        <div style={{ fontSize: 15, fontWeight: 600, color: "#050505", marginBottom: 5 }}>
-          {uploading ? "Uploading & Validating…" : "Click to upload dataset files"}
+        <div className="font-serif-display text-[22px] text-[#090909] mb-1">
+          {uploading ? "Uploading & Validating…" : "Upload synthetic dataset"}
         </div>
-        <div style={{ fontSize: 13, color: "#777777" }}>
-          Supported: CSV, TSV, JSON, JSONL, TXT, PDF, PNG (Quarantine test). Raw records are never exposed in previews.
-        </div>
+        <p className="text-[13px] text-[#666666] max-w-lg mx-auto">
+          Supports CSV, TSV, JSON, JSONL, TXT, and quarantine test files (PDF, PNG). Raw patient records are never previewed in the browser.
+        </p>
         <input
           ref={fileRef}
           type="file"
           multiple
           accept=".csv,.tsv,.json,.txt,.jsonl,.pdf,.png"
           onChange={handleUpload}
-          style={{ display: "none" }}
+          className="hidden"
         />
       </div>
 
-      {error && (
-        <div
-          style={{
-            padding: "12px 16px",
-            background: "#FFF5F5",
-            border: "1px solid #FFD5D5",
-            borderRadius: 8,
-            fontSize: 13,
-            color: "#CC3333",
-            marginBottom: 20,
-            display: "flex",
-            gap: 8,
-            alignItems: "center",
-          }}
-        >
-          <AlertTriangle size={15} />
-          {error}
-        </div>
-      )}
-
-      {/* Live active job */}
+      {/* Live Job Banner */}
       {activeJob && (
-        <div
-          style={{
-            background: "#FFFFFF",
-            border: "1.5px solid #050505",
-            borderRadius: 10,
-            padding: "16px 20px",
-            marginBottom: 24,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div className="bg-white border border-[#090909] rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center gap-3.5 min-w-0">
             {["COMPLETED", "COMPLETED_WITH_WARNINGS", "QUARANTINED", "BLOCKED", "FAILED"].includes(activeJob.status) ? (
-              <CheckCircle2 size={18} color="#050505" />
+              <CheckCircle2 size={20} className="text-[#090909] shrink-0" />
             ) : (
-              <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} />
+              <Loader2 size={20} className="text-[#090909] animate-spin shrink-0" />
             )}
-            <div>
-              <div style={{ fontSize: 13.5, fontWeight: 600, color: "#050505" }}>
+            <div className="min-w-0">
+              <div className="text-[13.5px] font-semibold text-[#090909] truncate">
                 Job {activeJob.id} — Stage: {activeJob.current_stage || activeJob.status}
               </div>
-              <div style={{ fontSize: 12, color: "#666666" }}>
-                Status: {activeJob.status} · Release Decision: {activeJob.release_decision || "PENDING"}
+              <div className="text-[12px] text-[#666666] mt-0.5 flex flex-wrap items-center gap-2">
+                <span>Status:</span>
+                <StatusBadge status={activeJob.status} />
+                <span>Release:</span>
+                <StatusBadge status={activeJob.release_decision || "PENDING"} />
               </div>
             </div>
           </div>
-          {["COMPLETED", "COMPLETED_WITH_WARNINGS"].includes(activeJob.status) &&
-            ["APPROVED", "APPROVED_WITH_WARNINGS"].includes(activeJob.release_decision || "") && (
+
+          {["COMPLETED", "COMPLETED_WITH_WARNINGS"].includes(activeJob.status) && (
             <a
               href={api.downloadJobUrl(activeJob.id)}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "7px 14px",
-                background: "#050505",
-                color: "#FFFFFF",
-                borderRadius: 6,
-                textDecoration: "none",
-                fontSize: 12.5,
-                fontWeight: 600,
-              }}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#090909] text-white text-[13px] font-medium hover:bg-[#222222] shrink-0"
             >
-              <Download size={13} />
-              Download Bundle
+              <Download size={14} />
+              <span>Download Bundle</span>
             </a>
           )}
         </div>
       )}
 
-      {/* Datasets table */}
-      <div style={{ background: "#FFFFFF", border: "1.5px solid #DCDCDC", borderRadius: 10, overflow: "hidden" }}>
-        <div
-          style={{
-            padding: "14px 20px",
-            borderBottom: "1px solid #EEEEEE",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <span style={{ fontSize: 14, fontWeight: 600, color: "#050505" }}>
+      {/* Datasets Table */}
+      <div className="bg-white border border-[#DADADA] rounded-2xl overflow-hidden">
+        <div className="px-6 py-4 border-b border-[#E5E5E5] flex items-center justify-between">
+          <h2 className="text-[15px] font-semibold text-[#090909]">
             Registered Datasets ({datasets.length})
-          </span>
+          </h2>
           <button
+            type="button"
             onClick={loadAll}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-              fontSize: 12.5,
-              color: "#777777",
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-            }}
+            className="inline-flex items-center gap-1.5 text-[12.5px] text-[#666666] hover:text-[#090909]"
           >
             <RefreshCw size={13} />
-            Refresh
+            <span>Refresh</span>
           </button>
         </div>
 
         {datasets.length === 0 ? (
-          <div style={{ padding: "48px 20px", textAlign: "center", fontSize: 13, color: "#777777" }}>
-            No datasets uploaded yet. Upload files above to create a dataset and start processing.
+          <div className="p-6">
+            <EmptyState
+              title="No datasets registered"
+              description="Upload synthetic files above to register a dataset and start the privacy pipeline."
+            />
           </div>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid #EEEEEE" }}>
-                {["Name", "Organisation", "Format", "Files", "Latest Job", "Created", ""].map((h) => (
-                  <th key={h} style={{ padding: "10px 18px", textAlign: "left", fontSize: 11.5, color: "#777777" }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {datasets.map((d) => (
-                <tr key={d.id} style={{ borderBottom: "1px solid #F5F5F5" }}>
-                  <td style={{ padding: "12px 18px", fontSize: 13.5, fontWeight: 500, color: "#050505" }}>
-                    {d.name}
-                  </td>
-                  <td style={{ padding: "12px 18px", fontSize: 12.5, color: "#555555" }}>
-                    {d.organisation_name || d.organisation_id}
-                  </td>
-                  <td style={{ padding: "12px 18px", fontSize: 12.5, color: "#777777" }}>
-                    {d.format}
-                  </td>
-                  <td style={{ padding: "12px 18px", fontSize: 13, color: "#050505" }}>
-                    {d.file_count}
-                  </td>
-                  <td style={{ padding: "12px 18px", fontSize: 12, fontWeight: 600, color: "#050505" }}>
-                    <div>{d.latest_job_status || "NOT_RUN"}</div>
-                    {d.latest_job_id && (
-                      <div style={{ fontSize: 11, fontWeight: 400, color: "#777777" }}>
-                        {d.latest_job_id} · {d.latest_release_decision || "PENDING"}
-                      </div>
-                    )}
-                  </td>
-                  <td style={{ padding: "12px 18px", fontSize: 12, color: "#777777" }}>
-                    {new Date(d.created_at * 1000).toLocaleDateString()}
-                  </td>
-                  <td style={{ padding: "12px 18px", textAlign: "right", whiteSpace: "nowrap" }}>
-                    {d.latest_job_id &&
-                      ["COMPLETED", "COMPLETED_WITH_WARNINGS"].includes(d.latest_job_status || "") &&
-                      ["APPROVED", "APPROVED_WITH_WARNINGS"].includes(d.latest_release_decision || "") && (
-                        <a
-                          href={api.downloadJobUrl(d.latest_job_id)}
-                          title="Download Bundle"
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 4,
-                            marginRight: 10,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            color: "#050505",
-                            textDecoration: "none",
-                          }}
-                        >
-                          <Download size={13} />
-                          Bundle
-                        </a>
-                      )}
-                    <button
-                      onClick={() => handleDelete(d.id)}
-                      title="Delete dataset"
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "#777777" }}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-[#E5E5E5] bg-[#F4F4F2]/60">
+                  {["Dataset", "Organisation", "Format", "Files", "Job Status", "Created", ""].map((h) => (
+                    <th key={h} className="px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.05em] text-[#666666]">
+                      {h}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-[#E5E5E5]">
+                {datasets.map((d) => (
+                  <tr key={d.id} className="hover:bg-[#F4F4F2]/40">
+                    <td className="px-5 py-3.5 text-[13.5px] font-medium text-[#090909]">{d.name}</td>
+                    <td className="px-5 py-3.5 text-[13px] text-[#666666]">{d.organisation_name || d.organisation_id}</td>
+                    <td className="px-5 py-3.5 text-[12px] font-mono text-[#666666]">{d.format}</td>
+                    <td className="px-5 py-3.5 text-[13px] text-[#090909]">{d.file_count}</td>
+                    <td className="px-5 py-3.5">
+                      <StatusBadge status={d.latest_job_status || "NOT_RUN"} />
+                    </td>
+                    <td className="px-5 py-3.5 text-[12px] text-[#666666] whitespace-nowrap">
+                      {new Date(d.created_at * 1000).toLocaleDateString()}
+                    </td>
+                    <td className="px-5 py-3.5 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setDeleteId(d.id)}
+                        aria-label={`Delete ${d.name}`}
+                        className="p-1.5 rounded-md text-[#888888] hover:text-[#7F1D1D] hover:bg-[#FDF2F2]"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
-      <style>{`
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-      `}</style>
+      <ConfirmationDialog
+        open={deleteId !== null}
+        title="Delete dataset?"
+        description="This soft-deletes the dataset from active listings while preserving immutable audit records."
+        confirmLabel="Delete Dataset"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteId(null)}
+      />
     </div>
   );
 }

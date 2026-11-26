@@ -1,4 +1,5 @@
 "use client";
+
 import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
@@ -25,75 +26,55 @@ export default function RegisterPage() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#F2F2F2",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-      }}
-    >
-      <Link href="/" style={{ textDecoration: "none", marginBottom: 32 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <Image src="/medilocker-logo.jpg" alt="MediLocker" width={36} height={36} style={{ borderRadius: "50%" }} />
-          <span style={{ fontWeight: 700, fontSize: 18, color: "#050505", letterSpacing: "-0.5px" }}>
-            MediLocker
-          </span>
-        </div>
+    <div className="min-h-screen bg-[#F4F4F2] flex flex-col items-center justify-center p-6">
+      <Link href="/" className="flex items-center gap-2.5 mb-8">
+        <Image
+          src="/medilocker-logo.jpg"
+          alt="MediLocker"
+          width={34}
+          height={34}
+          className="rounded-full"
+        />
+        <span className="font-serif-display text-[22px] text-[#090909]">
+          MediLocker
+        </span>
       </Link>
 
-      <div
-        style={{
-          background: "#FFFFFF",
-          border: "1.5px solid #DCDCDC",
-          borderRadius: 12,
-          padding: "40px 36px",
-          width: "100%",
-          maxWidth: 420,
-        }}
-      >
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: "#050505", letterSpacing: "-0.5px", marginBottom: 6 }}>
-          Create account
-        </h1>
-        <p style={{ fontSize: 13.5, color: "#777777", marginBottom: 24 }}>
-          Register your work email to sign in with Email OTP.
-        </p>
+      <div className="bg-white border border-[#DADADA] rounded-2xl p-8 sm:p-9 w-full max-w-[420px]">
+        <div className="mb-6">
+          <div className="text-[10.5px] font-semibold uppercase tracking-[0.1em] text-[#888888] mb-1.5">
+            ONBOARDING
+          </div>
+          <h1 className="font-serif-display text-[28px] leading-tight text-[#090909]">
+            Create account
+          </h1>
+          <p className="text-[13.5px] text-[#666666] mt-1">
+            Register your work email to access MediLocker.
+          </p>
+        </div>
 
         {error && (
-          <div style={{ padding: "10px 14px", background: "#FFF5F5", border: "1px solid #FFD5D5", borderRadius: 6, fontSize: 13, color: "#CC3333", marginBottom: 16 }}>
+          <div className="px-3.5 py-2.5 rounded-lg bg-[#FDF2F2] border border-[#E8C5C5] text-[13px] text-[#7F1D1D] mb-4">
             {error}
           </div>
         )}
 
         {doneMsg ? (
           <div>
-            <div style={{ padding: "12px 14px", background: "#F5F5F5", border: "1px solid #DCDCDC", borderRadius: 6, fontSize: 13.5, color: "#050505", marginBottom: 20 }}>
+            <div className="px-3.5 py-3 rounded-lg bg-[#F4F4F2] border border-[#DADADA] text-[13.5px] text-[#090909] mb-5">
               {doneMsg}
             </div>
             <Link
               href="/login"
-              style={{
-                display: "block",
-                textAlign: "center",
-                padding: "12px",
-                background: "#050505",
-                color: "#FFFFFF",
-                borderRadius: 7,
-                textDecoration: "none",
-                fontSize: 14,
-                fontWeight: 600,
-              }}
+              className="block text-center py-2.5 rounded-lg bg-[#090909] text-white text-[13.5px] font-medium hover:bg-[#222222]"
             >
               Continue to Sign In
             </Link>
           </div>
         ) : (
-          <form onSubmit={handleSubmit}>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: "block", fontSize: 12.5, fontWeight: 500, color: "#050505", marginBottom: 6 }}>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-[12.5px] font-medium text-[#090909] mb-1.5">
                 Full Name
               </label>
               <input
@@ -102,21 +83,12 @@ export default function RegisterPage() {
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Dr. Priya Nair"
                 required
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  border: "1.5px solid #DCDCDC",
-                  borderRadius: 7,
-                  fontSize: 14,
-                  color: "#050505",
-                  background: "#FAFAFA",
-                  outline: "none",
-                }}
+                className="w-full px-3 py-2.5 rounded-lg bg-[#F4F4F2]/60 border border-[#DADADA] text-[14px] text-[#090909] focus:outline-none focus:border-[#090909]"
               />
             </div>
 
-            <div style={{ marginBottom: 20 }}>
-              <label style={{ display: "block", fontSize: 12.5, fontWeight: 500, color: "#050505", marginBottom: 6 }}>
+            <div>
+              <label className="block text-[12.5px] font-medium text-[#090909] mb-1.5">
                 Work Email
               </label>
               <input
@@ -125,42 +97,23 @@ export default function RegisterPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@hospital.org"
                 required
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  border: "1.5px solid #DCDCDC",
-                  borderRadius: 7,
-                  fontSize: 14,
-                  color: "#050505",
-                  background: "#FAFAFA",
-                  outline: "none",
-                }}
+                className="w-full px-3 py-2.5 rounded-lg bg-[#F4F4F2]/60 border border-[#DADADA] text-[14px] text-[#090909] focus:outline-none focus:border-[#090909]"
               />
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              style={{
-                width: "100%",
-                padding: "12px",
-                background: loading ? "#333333" : "#050505",
-                color: "#FFFFFF",
-                border: "none",
-                borderRadius: 7,
-                fontSize: 14,
-                fontWeight: 600,
-                cursor: loading ? "not-allowed" : "pointer",
-              }}
+              className="w-full py-2.5 rounded-lg bg-[#090909] text-white text-[13.5px] font-medium hover:bg-[#222222] transition-colors disabled:opacity-50"
             >
               {loading ? "Creating account…" : "Register"}
             </button>
           </form>
         )}
 
-        <div style={{ textAlign: "center", marginTop: 20, fontSize: 13, color: "#777777" }}>
+        <div className="text-center mt-6 text-[13px] text-[#666666]">
           Already registered?{" "}
-          <Link href="/login" style={{ color: "#050505", fontWeight: 500, textDecoration: "none" }}>
+          <Link href="/login" className="text-[#090909] font-medium hover:underline">
             Sign in
           </Link>
         </div>
