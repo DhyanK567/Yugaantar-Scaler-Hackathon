@@ -16,7 +16,10 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    REPO_ROOT = Path(sys._MEIPASS)  # type: ignore[attr-defined]
+else:
+    REPO_ROOT = Path(__file__).resolve().parent.parent
 STARTER_DIR = REPO_ROOT / "starter"
 MAIN_PY = STARTER_DIR / "main.py"
 DEV_INPUT = REPO_ROOT / "dev" / "input"
@@ -51,14 +54,24 @@ def execute_engine(
     )
 
     t0 = time.monotonic()
-    cmd = [
-        sys.executable,
-        str(MAIN_PY),
-        "--input",
-        str(input_dir),
-        "--output",
-        str(output_dir),
-    ]
+    if getattr(sys, "frozen", False):
+        cmd = [
+            sys.executable,
+            "--run-engine",
+            "--input",
+            str(input_dir),
+            "--output",
+            str(output_dir),
+        ]
+    else:
+        cmd = [
+            sys.executable,
+            str(MAIN_PY),
+            "--input",
+            str(input_dir),
+            "--output",
+            str(output_dir),
+        ]
 
     proc = subprocess.run(
         cmd,

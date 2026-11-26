@@ -4,16 +4,31 @@ import { useEffect, useState } from "react";
 import { api, type SettingsData } from "@/lib/api";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorState, LoadingState } from "@/components/ui/StatePanels";
-import { Save, CheckCircle2 } from "lucide-react";
+import { Save, CheckCircle2, Download } from "lucide-react";
+
+interface DiagnosticsData {
+  desktop_runtime: string;
+  api_status: string;
+  engine_status: string;
+  database_status: string;
+  encryption_configured: boolean;
+  offline_mode: boolean;
+  disk_free_bytes: number;
+  disk_total_bytes: number;
+  data_dir: string;
+  version: string;
+}
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<SettingsData | null>(null);
+  const [diag, setDiag] = useState<DiagnosticsData | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     api.settings().then(setSettings).catch((e) => setError(e.message));
+    api.diagnostics().then(setDiag).catch(() => {});
   }, []);
 
   async function handleSave(e: React.FormEvent) {
@@ -86,6 +101,33 @@ export default function SettingsPage() {
               </div>
             </div>
           </div>
+
+          {diag && (
+            <div className="bg-white border border-[#DADADA] rounded-2xl p-6">
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <h2 className="text-[15px] font-semibold text-[#090909]">
+                  Offline System Diagnostics
+                </h2>
+                <a
+                  href={api.briefPdfUrl()}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#090909] text-white text-[12px] font-medium hover:bg-[#222222]"
+                >
+                  <Download size={13} />
+                  <span>Operational PDF</span>
+                </a>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[13px] text-[#666666]">
+                <div><span className="text-[#090909] font-medium">Runtime:</span> {diag.desktop_runtime}</div>
+                <div><span className="text-[#090909] font-medium">Local API:</span> {diag.api_status}</div>
+                <div><span className="text-[#090909] font-medium">Privacy Engine:</span> {diag.engine_status}</div>
+                <div><span className="text-[#090909] font-medium">Database:</span> {diag.database_status}</div>
+                <div><span className="text-[#090909] font-medium">Encryption Key:</span> {diag.encryption_configured ? "Configured" : "Not Configured"}</div>
+                <div><span className="text-[#090909] font-medium">Free Disk Space:</span> {(diag.disk_free_bytes / (1024 ** 3)).toFixed(2)} GB</div>
+                <div className="sm:col-span-2 truncate"><span className="text-[#090909] font-medium">Storage Path:</span> {diag.data_dir}</div>
+                <div><span className="text-[#090909] font-medium">Version:</span> {diag.version}</div>
+              </div>
+            </div>
+          )}
 
           <form
             onSubmit={handleSave}
