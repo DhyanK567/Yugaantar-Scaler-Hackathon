@@ -1,5 +1,5 @@
 # GuptKavach privacy & adversarial risk policy
-policy_version: m10-v1
+policy_version: m15.5-v1
 age_band_years: 5          # default age band width (e.g. 45-49)
 upper_age_band: 85         # ages >= this become 85+
 date_shift_max_days: 180   # every date of one patient moves by the same secret offset
@@ -23,3 +23,11 @@ risk_threshold_critical: 75
 max_critical_records_for_pass: 0
 max_high_risk_ratio_for_pass: 0.15
 min_clinical_retention_ratio: 0.90
+
+# Milestone 15.5 Privacy Passport release gate rules
+require_fhir_validation: true
+require_security_checks: true
+require_cryptographic_integrity: true
+block_on_canary_exposure: true
+block_on_direct_leak: true
+require_signature: false
