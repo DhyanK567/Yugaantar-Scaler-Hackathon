@@ -112,6 +112,8 @@ def execute_engine(
         "records_generalized": counts.get("records_generalized", 0),
         "records_suppressed": counts.get("records_suppressed", 0),
         "files_report": report_data.get("files", []),
+        "privacy_intelligence": report_data.get("privacy_intelligence", {}),
+        "clinical_integrity": report_data.get("clinical_integrity", {}),
     }
 
 
@@ -273,6 +275,12 @@ def parse_identity_continuity_graph(output_dir: Optional[Path] = None) -> Dict[s
         "pseudonymous_clusters": len(patient_clusters),
         "multi_facility_links": len(multi_org_patients),
         "false_merge_rate": "0.00% (Strict Abstention)",
+        "stats": {
+            "total_records": total_records,
+            "linked_records": total_records - unlinked_records,
+            "unlinked_records": unlinked_records,
+            "linked_clusters_count": len(patient_clusters),
+        },
         "nodes": nodes,
         "edges": edges,
         "clusters": cluster_summaries,
