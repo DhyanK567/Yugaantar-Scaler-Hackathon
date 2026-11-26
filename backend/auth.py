@@ -112,20 +112,74 @@ def get_smtp_config() -> Dict[str, Any]:
 
 
 def send_otp_email(to_email: str, otp_code: str, expiry_minutes: int = 5) -> None:
-    """Send OTP via configured SMTP server. Raises RuntimeError if unconfigured or delivery fails."""
+    """Send OTP via configured SMTP server with MediLocker monochrome HTML + plain-text body.
+    Raises RuntimeError if unconfigured or delivery fails.
+    """
     cfg = get_smtp_config()
     if not cfg["configured"]:
         raise RuntimeError("SMTP_NOT_CONFIGURED")
 
     msg = EmailMessage()
-    msg["Subject"] = "MediLocker Verification Code"
+    msg["Subject"] = f"Use {otp_code} to sign in to MediLocker"
     msg["From"] = f"{cfg['from_name']} <{cfg['from_email']}>"
     msg["To"] = to_email
+
+    # Plain-text fallback
     msg.set_content(
-        f"Your MediLocker verification code is: {otp_code}\n\n"
-        f"This code expires in {expiry_minutes} minutes and can only be used once.\n"
+        f"Use {otp_code} to sign in to MediLocker.\n\n"
+        f"Your verification code is: {otp_code}\n"
+        f"This code expires in {expiry_minutes} minutes and can only be used once.\n\n"
         f"If you did not request this code, you can safely ignore this email."
     )
+
+    # Monochrome MediLocker HTML template with 6 individual digit cells
+    digit_cells = "".join(
+        f'<td style="width:42px;height:48px;background:#F2F2F2;border:1.5px solid #DCDCDC;'
+        f'border-radius:8px;text-align:center;vertical-align:middle;font-size:22px;'
+        f'font-weight:700;color:#050505;font-family:\'SF Pro Display\',-apple-system,Inter,Arial,sans-serif;">'
+        f"{d}</td>"
+        for d in otp_code
+    )
+    html_body = f"""<!doctype html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:32px 16px;background:#F2F2F2;font-family:'SF Pro Display',-apple-system,BlinkMacSystemFont,'Inter',Arial,sans-serif;color:#050505;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:480px;margin:0 auto;background:#FFFFFF;border:1.5px solid #DCDCDC;border-radius:12px;overflow:hidden;">
+    <tr>
+      <td style="background:#050505;padding:22px 28px;">
+        <span style="font-size:18px;font-weight:700;color:#FFFFFF;letter-spacing:-0.4px;">MediLocker</span>
+        <span style="display:block;font-size:11.5px;color:#AAAAAA;margin-top:3px;">Secure. Private. Clinically Usable.</span>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:30px 28px 26px;">
+        <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:#777777;margin-bottom:8px;">
+          Verification Code
+        </div>
+        <h1 style="margin:0 0 10px;font-size:20px;font-weight:700;color:#050505;letter-spacing:-0.4px;">
+          Sign in to your MediLocker account
+        </h1>
+        <p style="margin:0 0 22px;font-size:14px;line-height:1.55;color:#555555;">
+          Enter the 6-digit verification code below to complete your sign-in. This code expires in <strong>{expiry_minutes} minutes</strong> and can only be used once.
+        </p>
+        <table role="presentation" cellspacing="8" cellpadding="0" style="margin:0 auto 22px;">
+          <tr>{digit_cells}</tr>
+        </table>
+        <div style="background:#F2F2F2;border:1px solid #E6E6E6;border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.5;color:#555555;">
+          <strong>Security Notice:</strong> Never share this code with anyone. MediLocker will never ask for your verification code by phone or message.
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:14px 28px;border-top:1px solid #EEEEEE;font-size:11.5px;color:#777777;">
+        If you did not request this verification code, you can safely ignore this email.
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+
+    msg.add_alternative(html_body, subtype="html")
 
     if cfg["port"] == 465:
         with smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=15) as server:
