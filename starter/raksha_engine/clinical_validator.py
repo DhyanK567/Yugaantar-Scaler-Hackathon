@@ -193,3 +193,174 @@ def validate_clinical_probes(
                 rep.missing_clinical_items += 1
                 rep.failures.append(ValidationFailure("CLINICAL_VALUE_LOST", location, f"Lost: {item}"))
     return rep
+
+
+# ==============================================================================
+# M15.5 Phase 2 — Evidence-Based Clinical Fidelity & Drift Engine
+# ==============================================================================
+
+CLINICAL_CATEGORY_PATTERNS: dict[str, re.Pattern[str]] = {
+    "medication_names": re.compile(
+        r"\b(?:Paracetamol|Dolo|Azithromycin|Amoxicillin|Metformin|Amlodipine|Atorvastatin|"
+        r"Pantoprazole|Ceftriaxone|Insulin|Levodopa|Salbutamol|Aspirin|Clopidogrel|Losartan|"
+        r"Omeprazole|Ciprofloxacin|Ibuprofen|Doxycycline|ORS)\b",
+        re.IGNORECASE,
+    ),
+    "dosages": re.compile(r"\b\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml|IU|units)\b", re.IGNORECASE),
+    "units": re.compile(r"\b(?:mg/dL|mmol/L|g/dL|U/L|IU/L|mg|mcg|mL|bpm|mmHg)\b", re.IGNORECASE),
+    "frequencies": re.compile(r"\b(?:OD|BD|TDS|QID|HS|SOS|PRN|once\s+daily|twice\s+daily|thrice\s+daily)\b", re.IGNORECASE),
+    "administration_routes": re.compile(r"\b(?:oral|PO|IV|IM|SC|subcutaneous|topical|inhaled|sublingual)\b", re.IGNORECASE),
+    "treatment_duration": re.compile(r"\b(?:for\s+)?\d+\s*(?:days?|weeks?|months?)\b", re.IGNORECASE),
+    "blood_pressure": re.compile(r"\b(?:BP\s*[:\-]?\s*)?\d{2,3}/\d{2,3}(?:\s*mmHg)?\b", re.IGNORECASE),
+    "heart_rate": re.compile(r"\b(?:HR|Pulse)\s*[:\-]?\s*\d{2,3}(?:\s*bpm)?\b", re.IGNORECASE),
+    "temperature": re.compile(r"\bTemp(?:erature)?\s*[:\-]?\s*\d{2,3}(?:\.\d+)?\s*(?:°?[FC])\b", re.IGNORECASE),
+    "spo2": re.compile(r"\bSpO2\s*[:\-]?\s*\d{2,3}\s*%\b", re.IGNORECASE),
+    "haemoglobin": re.compile(r"\b(?:Hb|Haemoglobin|Hemoglobin)\s*[:\-]?\s*\d{1,2}(?:\.\d+)?(?:\s*g/dL)?\b", re.IGNORECASE),
+    "blood_glucose": re.compile(r"\b(?:RBS|FBS|PPBS|Glucose|Blood\s+Sugar)\s*[:\-]?\s*\d{2,3}(?:\.\d+)?(?:\s*mg/dL)?\b", re.IGNORECASE),
+    "laboratory_measurements": re.compile(
+        r"\b(?:Creatinine|Bilirubin|Platelets?|WBC|RBC|TSH|HbA1c|ALT|AST|SGPT|SGOT)\s*[:\-]?\s*\d+(?:\.\d+)?(?:\s*[A-Za-z/%]+)?\b",
+        re.IGNORECASE,
+    ),
+    "diagnoses": re.compile(
+        r"\b(?:Diabetes(?:\s+mellitus)?|Hypertension|Dengue(?:\s+fever)?|Malaria|Typhoid|"
+        r"Asthma|Pneumonia|Bronchitis|Parkinson(?:'s)?\s+disease|Alzheimer(?:'s)?\s+disease|"
+        r"Bell(?:'s)?\s+palsy|Coronary\s+artery\s+disease|Anemia|Fever|Cough)\b",
+        re.IGNORECASE,
+    ),
+}
+
+
+def _safe_pct(preserved: int, expected: int) -> float | None:
+    if expected <= 0:
+        return None
+    pct = (preserved / expected) * 100.0
+    if preserved < expected and pct >= 99.995:
+        # Never round <100% up to 100.0%
+        return 99.99
+    return round(pct, 2)
+
+
+def _extract_category_multiset(text: str, rx: re.Pattern[str]) -> list[str]:
+    return [" ".join(m.group(0).casefold().split()) for m in rx.finditer(text)]
+
+
+def analyze_clinical_drift(
+    input_texts: list[str],
+    sanitized_texts: list[str],
+    fhir_bundles: list[dict] | None = None,
+) -> dict:
+    """Compare clinical entities across input and sanitized texts without exposing raw patient text.
+
+    Detects exact preservation, missing entities, numeric/dosage drift (e.g. 5 mg -> 50 mg),
+    unexpected entities, and FHIR R4 structural & code/reference integrity.
+    """
+    from collections import Counter
+
+    in_joined = "\n".join(input_texts)
+    san_joined = "\n".join(sanitized_texts)
+
+    categories_report: dict[str, dict] = {}
+    total_expected = 0
+    total_preserved = 0
+    total_missing = 0
+    total_modified = 0
+    total_unexpected = 0
+    critical_failures: list[dict[str, str]] = []
+
+    for cat_name, rx in CLINICAL_CATEGORY_PATTERNS.items():
+        in_counts = Counter(_extract_category_multiset(in_joined, rx))
+        san_counts = Counter(_extract_category_multiset(san_joined, rx))
+
+        expected = sum(in_counts.values())
+        preserved = 0
+        for tok, cnt in in_counts.items():
+            preserved += min(cnt, san_counts.get(tok, 0))
+
+        # Check for numeric/unit drift in remaining unmatched tokens (e.g. 5 mg -> 50 mg)
+        unmatched_in = []
+        for tok, cnt in in_counts.items():
+            rem = cnt - min(cnt, san_counts.get(tok, 0))
+            unmatched_in.extend([tok] * rem)
+
+        unmatched_san = []
+        for tok, cnt in san_counts.items():
+            rem = cnt - min(cnt, in_counts.get(tok, 0))
+            unmatched_san.extend([tok] * rem)
+
+        modified = 0
+        if unmatched_in and unmatched_san and cat_name in ("dosages", "blood_pressure", "heart_rate", "temperature", "spo2", "haemoglobin", "blood_glucose", "laboratory_measurements"):
+            pair_count = min(len(unmatched_in), len(unmatched_san))
+            modified = pair_count
+            if modified > 0:
+                critical_failures.append({
+                    "category": cat_name,
+                    "code": "CLINICAL_VALUE_DRIFT",
+                    "count": str(modified),
+                    "detail": f"Detected {modified} numeric/unit value mutation(s) in {cat_name}.",
+                })
+
+        missing = max(0, expected - preserved - modified)
+        unexpected = max(0, len(unmatched_san) - modified)
+
+        total_expected += expected
+        total_preserved += preserved
+        total_missing += missing
+        total_modified += modified
+        total_unexpected += unexpected
+
+        categories_report[cat_name] = {
+            "expected": expected,
+            "preserved": preserved,
+            "missing": missing,
+            "modified": modified,
+            "unexpected": unexpected,
+            "exact_preservation_pct": _safe_pct(preserved, expected),
+        }
+
+    # FHIR R4 bundle & reference integrity
+    fhir_checked = 0
+    fhir_valid = 0
+    fhir_fail_count = 0
+    for b in (fhir_bundles or []):
+        res = validate_fhir_r4_bundle(b, location="fhir_bundle")
+        fhir_checked += res.bundles_checked
+        if res.valid:
+            fhir_valid += 1
+        else:
+            fhir_fail_count += len(res.failures)
+            critical_failures.append({
+                "category": "fhir_resource_codes_and_refs",
+                "code": "FHIR_INTEGRITY_FAILURE",
+                "count": str(len(res.failures)),
+                "detail": f"FHIR R4 validation failed with {len(res.failures)} structural/reference error(s).",
+            })
+
+    categories_report["fhir_resource_codes_and_refs"] = {
+        "expected": fhir_checked,
+        "preserved": fhir_valid,
+        "missing": max(0, fhir_checked - fhir_valid),
+        "modified": 0,
+        "unexpected": 0,
+        "exact_preservation_pct": _safe_pct(fhir_valid, fhir_checked),
+    }
+
+    overall_pct = _safe_pct(total_preserved, total_expected)
+    passed = (total_modified == 0 and total_missing == 0 and fhir_fail_count == 0)
+
+    return {
+        "status": "PASS" if passed else "FAILED",
+        "passed": passed,
+        "overall": {
+            "expected": total_expected,
+            "preserved": total_preserved,
+            "missing": total_missing,
+            "modified": total_modified,
+            "unexpected": total_unexpected,
+            "exact_fidelity_pct": overall_pct,
+        },
+        "categories": categories_report,
+        "fhir_bundles_checked": fhir_checked,
+        "fhir_bundles_valid": fhir_valid,
+        "fhir_failures": fhir_fail_count,
+        "critical_failures": critical_failures,
+    }

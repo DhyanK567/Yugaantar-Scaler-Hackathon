@@ -31,11 +31,25 @@ from raksha_engine.crypto import (
     decrypt_payload,
     derive_key,
     encrypt_payload,
+    hkdf_sha256,
+    validate_secret,
+    HKDF_DOMAIN_PSEUDONYM,
+    HKDF_DOMAIN_DATE_SHIFT,
+    HKDF_DOMAIN_IDENTITY_LINK,
+    HKDF_DOMAIN_MANIFEST,
+    HKDF_DOMAIN_PASSPORT_AUTH,
     KEY_PURPOSE_PSEUDONYM,
     KEY_PURPOSE_DATE_SHIFT,
     KEY_PURPOSE_ENCRYPTION,
     KEY_PURPOSE_INTEGRITY,
     KEY_PURPOSE_QUARANTINE,
+)
+from raksha_engine.privacy import (
+    date_shift_days,
+    identity_linking_token,
+    manifest_hmac,
+    passport_auth_hmac,
+    pseudonym,
 )
 from raksha_engine.secure_fs import (
     PathSecurityError,
@@ -80,6 +94,38 @@ class TestCryptographicKeyManagement(unittest.TestCase):
         fp = self.keyring.key_fingerprint
         self.assertEqual(len(fp), 16)
         self.assertNotIn(self.secret.decode(), fp)
+
+    def test_hkdf_cross_purpose_key_separation(self):
+        k_p = hkdf_sha256(self.secret, HKDF_DOMAIN_PSEUDONYM)
+        k_d = hkdf_sha256(self.secret, HKDF_DOMAIN_DATE_SHIFT)
+        k_i = hkdf_sha256(self.secret, HKDF_DOMAIN_IDENTITY_LINK)
+        k_m = hkdf_sha256(self.secret, HKDF_DOMAIN_MANIFEST)
+        k_a = hkdf_sha256(self.secret, HKDF_DOMAIN_PASSPORT_AUTH)
+        k_enc = self.keyring.storage_encryption_key
+        all_keys = [k_p, k_d, k_i, k_m, k_a, k_enc]
+        self.assertEqual(len(set(all_keys)), 6, "Pseudonym, shift, linking, manifest, passport, and encryption keys must be distinct.")
+
+    def test_same_secret_determinism_and_different_secret_separation(self):
+        s1 = b"medilocker-secret-alpha-01"
+        s2 = b"medilocker-secret-beta-02"
+        self.assertEqual(pseudonym("pt-123", s1), pseudonym("pt-123", s1))
+        self.assertNotEqual(pseudonym("pt-123", s1), pseudonym("pt-123", s2))
+        self.assertEqual(date_shift_days("pt-123", s1), date_shift_days("pt-123", s1))
+        self.assertEqual(identity_linking_token("aadhaar:1234", s1), identity_linking_token("aadhaar:1234", s1))
+        self.assertNotEqual(identity_linking_token("aadhaar:1234", s1), identity_linking_token("aadhaar:1234", s2))
+        self.assertNotEqual(manifest_hmac("root123", s1), manifest_hmac("root123", s2))
+        self.assertNotEqual(passport_auth_hmac(b"{}", s1), passport_auth_hmac(b"{}", s2))
+
+    def test_missing_and_weak_secret_validation(self):
+        with self.assertRaises(InvalidSecretError):
+            pseudonym("pt-1", b"")
+        with self.assertRaises(InvalidSecretError):
+            validate_secret("")
+        with self.assertRaises(InvalidSecretError):
+            validate_secret("short")
+        with self.assertRaises(InvalidSecretError):
+            validate_secret("aaaaaaaaaaaa")
+        self.assertEqual(validate_secret("strong-secret-2026"), b"strong-secret-2026")
 
 
 class TestAuthenticatedEncryption(unittest.TestCase):
