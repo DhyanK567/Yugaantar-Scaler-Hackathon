@@ -184,8 +184,9 @@ Do it in this order. Each step is measurable with `check_dev.py`.
    write `null`.
 7. **Quasi-identifiers.** Per-patient date shift (same shift for all of one patient's
    dates), 5-year age bands, village → district, suppress rare values.
-8. **Security and the README.** Encrypt intermediate data at rest, keep keys out of the
-   data folder, log only counts, and document everything (see §9).
+8. **Security, README and the brief.** Encrypt intermediate data at rest, keep keys out of the
+   data folder, log only counts, document everything, and write the 2-page Project Brief
+   PDF with your measured numbers ([docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md)).
 
 ---
 
@@ -200,6 +201,7 @@ Do it in this order. Each step is measurable with `check_dev.py`.
 - [ ] it finishes within the time limit on 2 CPUs and 4 GB RAM
 - [ ] no LLMs and no model above 50M parameters; any model you use is declared in the README
 - [ ] the README has setup, an architecture diagram, how each part works, the security design, and known limitations
+- [ ] the **2-page Project Brief PDF** is ready ([docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md), template in [brief/](brief/)) with your measured numbers from `check_dev.py`
 - [ ] you **tested on data you didn't tune on**: rename columns, swap in new names, change date formats, then run `check_dev.py` again
 
 ---
@@ -215,4 +217,5 @@ Do it in this order. Each step is measurable with `check_dev.py`.
 | how the data is built, canaries, the unseen-format round | [docs/DATASET.md](docs/DATASET.md) |
 | what your code can and cannot do on our machine | [docs/SANDBOX.md](docs/SANDBOX.md) |
 | how we keep the ranking fair | [docs/FAIRNESS.md](docs/FAIRNESS.md) |
+| what goes in the 2-page Project Brief PDF | [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md) |
 | quick answers | [docs/FAQ.md](docs/FAQ.md) |

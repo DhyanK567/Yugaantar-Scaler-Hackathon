@@ -40,14 +40,14 @@ A practice dataset with full answers is released at the start.
 
 ## 3. Deliverables & System Architecture
 
-Your submission is a **GitHub repository** with a runnable pipeline and a short technical README covering:
+Your submission is a **public GitHub repository** with a runnable pipeline, a **README.md**, and a **2-page Project Brief PDF** ([how to write it](PROJECT_BRIEF.md)) covering:
 
 - **Ingestion:** Reads CSV, TSV, JSON, FHIR R4 and text notes in different encodings, including broken, truncated and unsupported files.
 - **Detection Engine:** How personal data is found in structured columns and free text across three scripts: rules, gazetteers, transliteration, classical ML, and how they are combined.
 - **Linkage & Pseudonymisation:** How records of the same patient are clustered (blocking, fuzzy and phonetic matching, cross-script comparison) and how stable, **non-reversible** pseudonyms are issued (keyed HMAC, not plain hashing).
 - **Privacy Layer:** How quasi-identifiers are handled (per-patient date shifting, age banding, location generalisation, rare-value suppression) and your measured re-identification risk.
 - **Security Design:** Encryption of raw and intermediate data at rest, keys kept away from data, PII-free logging and a quarantine design. Assume your server will be breached one day.
-- **README:** Setup steps, architecture diagram, how each part works, and known limitations.
+- **README & 2-Page Project Brief (PDF):** Setup steps, architecture diagram, USP, privacy-utility trade-off analysis, and known limitations.
 
 **Note on Innovation:** Wrapping an off-the-shelf PII tool with default settings will score poorly. These tools miss Hindi and Hinglish, break on Indian name structures, and do nothing against linkage attacks. Deleting everything scores about 20/100, and copying data unchanged scores below zero. We reward cross-script identity matching, smart quasi-identifier handling, measurable privacy and systems that still work on formats they have never seen.
 
@@ -127,7 +127,7 @@ python3 validate_output.py --input dev/input --output my_output/
 
 It must print `CONTRACT OK`.
 
-**Step 4: Submit your GitHub repo link** before the deadline. We record your last commit at the deadline; later commits are ignored.
+**Step 4: Submit your GitHub repo link and 2-page Project Brief PDF** before the deadline. We record your last commit at the deadline; later commits are ignored.
 
 **Minimal repo layout**
 

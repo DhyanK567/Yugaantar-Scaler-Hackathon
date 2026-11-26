@@ -5,7 +5,13 @@ Short answers to the questions teams ask most. Longer answers are linked.
 ## Submitting
 
 **What exactly do we submit?**
-A GitHub repository link. We record your **last commit at the deadline**, and later commits are ignored.
+A **public** GitHub repository link and a **2-page Project Brief PDF** ([what to put in it](PROJECT_BRIEF.md)).
+We record your **last commit at the deadline**, and later commits are ignored.
+
+**What goes in the 2-page brief?**
+Your architecture diagram, how each part works, your USP, the privacy-utility trade-off with
+measured numbers, the security design and known limitations. A fill-in template is in
+[`brief/`](../brief/PROJECT_BRIEF_TEMPLATE.md).
 
 **Which file tells you how to run our code?**
 `raksha.toml` at the root of the repository:

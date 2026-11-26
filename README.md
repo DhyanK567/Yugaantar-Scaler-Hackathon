@@ -36,6 +36,7 @@ All data is synthetic. No real patient appears anywhere.
 | 🗂️ | [`dev/input/`](dev/input) | the practice dataset: 200 files, 48 patients, 4 hospitals, every trap |
 | 🔑 | [`dev/truth/truth.json`](dev/truth) | the practice **answer key**: every piece of personal data, every true patient |
 | 🕵️ | [`dev/attacker/`](dev/attacker) | what the attacker knows: a voter-list register and known facts |
+| 📝 | [`brief/`](brief) | a fill-in template for the 2-page Project Brief PDF |
 | 🧱 | [`starter/`](starter) | a working skeleton that already writes the correct output format |
 | ✅ | [`validate_output.py`](validate_output.py) | the format checker; must print `CONTRACT OK` |
 | 📊 | [`check_dev.py`](check_dev.py) | the practice self-check: leaks, canaries, medical values kept, linking quality |
@@ -82,7 +83,8 @@ output/
 
 **3. Check:** `python3 validate_output.py --input dev/input --output my_output` → `CONTRACT OK`.
 
-**4. Submit your GitHub link before the deadline.** We freeze your last commit at the deadline.
+**4. Submit your GitHub link and your 2-page Project Brief PDF before the deadline.** We freeze your last commit at the deadline.
+How to write the brief: [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md) · template: [brief/PROJECT_BRIEF_TEMPLATE.md](brief/PROJECT_BRIEF_TEMPLATE.md).
 
 Full contract: [docs/SPEC.md](docs/SPEC.md).
 
@@ -136,6 +138,7 @@ Full rules: [docs/PROBLEM_STATEMENT.md §6](docs/PROBLEM_STATEMENT.md).
 | [docs/DATASET.md](docs/DATASET.md) | how the data is built: hospitals, traps, canaries, the unseen-format round |
 | [docs/SANDBOX.md](docs/SANDBOX.md) | what your code can and cannot do on our machine |
 | [docs/FAIRNESS.md](docs/FAIRNESS.md) | how the ranking is kept impartial: seed commitment, freeze, blind board, ties |
+| [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md) | what to put in the 2-page Project Brief PDF |
 | [docs/FAQ.md](docs/FAQ.md) | quick answers to common questions |
 
 ## Recommended reading and libraries
