@@ -2,11 +2,14 @@
 // Uses environment-based API URL, HttpOnly cookie sessions, timeouts, and typed contracts.
 
 function getApiBase(): string {
-  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
   if (typeof window !== "undefined") {
+    const desktopBridge = (window as unknown as { medilockerDesktop?: { apiBase?: string } })
+      .medilockerDesktop;
+    if (desktopBridge?.apiBase) return desktopBridge.apiBase;
+    if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
     return `http://${window.location.hostname}:8000`;
   }
-  return "http://127.0.0.1:8000";
+  return process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 }
 
 const API_BASE = getApiBase();
@@ -459,4 +462,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  diagnostics: () =>
+    request<{
+      desktop_runtime: string;
+      api_status: string;
+      engine_status: string;
+      database_status: string;
+      encryption_configured: boolean;
+      offline_mode: boolean;
+      disk_free_bytes: number;
+      disk_total_bytes: number;
+      data_dir: string;
+      version: string;
+    }>("/api/system/diagnostics"),
+  briefPdfUrl: () => `${API_BASE}/api/reports/brief-pdf`,
 };

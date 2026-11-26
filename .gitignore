@@ -28,3 +28,9 @@ frontend/.next/
 frontend/.turbo/
 frontend/out/
 dist/
+release/
+desktop/node_modules/
+desktop/py_dist/
+desktop/py_build/
+desktop/web_dist/
+desktop/node_runtime/
