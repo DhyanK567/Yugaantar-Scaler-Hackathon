@@ -2,8 +2,11 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "GuptKavach | Healthcare Privacy Firewall Console",
-  description: "Enterprise Control Centre for Collaborative Healthcare Privacy Intelligence",
+  title: "MediLocker — Secure. Private. Clinically Usable.",
+  description: "Healthcare Data Privacy & Secure Research Collaboration Infrastructure. Multilingual patient identity protection with clinical data preservation.",
+  icons: {
+    icon: "/medilocker-logo.jpg",
+  },
 };
 
 export default function RootLayout({
@@ -12,8 +15,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
-      <body className="min-h-screen bg-[#070D18] text-slate-100 antialiased selection:bg-cyan-500/30 selection:text-cyan-200">
+    <html lang="en">
+      <body className="min-h-screen antialiased">
         {children}
       </body>
     </html>
