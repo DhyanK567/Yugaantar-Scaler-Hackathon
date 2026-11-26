@@ -5,7 +5,7 @@ import { api, type Dataset, type JobRecord, type Organisation } from "@/lib/api"
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ConfirmationDialog, EmptyState, ErrorState } from "@/components/ui/StatePanels";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { Upload, Download, RefreshCw, CheckCircle2, Loader2, Trash2 } from "lucide-react";
+import { Upload, Download, RefreshCw, CheckCircle2, Loader2, Trash2, FileText } from "lucide-react";
 
 export default function DatasetsPage() {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
@@ -13,6 +13,7 @@ export default function DatasetsPage() {
   const [selectedOrg, setSelectedOrg] = useState("");
   const [activeJob, setActiveJob] = useState<JobRecord | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [downloadingReportJobId, setDownloadingReportJobId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -70,6 +71,26 @@ export default function DatasetsPage() {
     }
     setUploading(false);
     if (fileRef.current) fileRef.current.value = "";
+  }
+
+  async function handleGenerateReport(jobId: string) {
+    setDownloadingReportJobId(jobId);
+    setError("");
+    try {
+      const blob = await api.downloadPrivacyReportPdf(jobId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `MediLocker_Privacy_Integrity_Report_${jobId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDownloadingReportJobId(null);
+    }
   }
 
   async function confirmDelete() {
@@ -156,15 +177,36 @@ export default function DatasetsPage() {
             </div>
           </div>
 
-          {["COMPLETED", "COMPLETED_WITH_WARNINGS"].includes(activeJob.status) && (
-            <a
-              href={api.downloadJobUrl(activeJob.id)}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#090909] text-white text-[13px] font-medium hover:bg-[#222222] shrink-0"
-            >
-              <Download size={14} />
-              <span>Download Bundle</span>
-            </a>
-          )}
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            {["COMPLETED", "COMPLETED_WITH_WARNINGS", "BLOCKED", "QUARANTINED"].includes(activeJob.status) && (
+              <button
+                type="button"
+                onClick={() => handleGenerateReport(activeJob.id)}
+                disabled={downloadingReportJobId === activeJob.id}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white border border-[#090909] text-[#090909] text-[13px] font-medium hover:bg-[#F4F4F2] disabled:opacity-60"
+              >
+                {downloadingReportJobId === activeJob.id ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <FileText size={14} />
+                )}
+                <span>
+                  {downloadingReportJobId === activeJob.id
+                    ? "Generating Report…"
+                    : "Generate Privacy & Integrity Report"}
+                </span>
+              </button>
+            )}
+            {["COMPLETED", "COMPLETED_WITH_WARNINGS"].includes(activeJob.status) && (
+              <a
+                href={api.downloadJobUrl(activeJob.id)}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#090909] text-white text-[13px] font-medium hover:bg-[#222222]"
+              >
+                <Download size={14} />
+                <span>Download Bundle</span>
+              </a>
+            )}
+          </div>
         </div>
       )}
 
@@ -217,14 +259,31 @@ export default function DatasetsPage() {
                       {new Date(d.created_at * 1000).toLocaleDateString()}
                     </td>
                     <td className="px-5 py-3.5 text-right">
-                      <button
-                        type="button"
-                        onClick={() => setDeleteId(d.id)}
-                        aria-label={`Delete ${d.name}`}
-                        className="p-1.5 rounded-md text-[#888888] hover:text-[#7F1D1D] hover:bg-[#FDF2F2]"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      <div className="inline-flex items-center gap-2">
+                        {d.latest_job_id && (
+                          <button
+                            type="button"
+                            onClick={() => handleGenerateReport(d.latest_job_id!)}
+                            disabled={downloadingReportJobId === d.latest_job_id}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-[#DADADA] bg-white text-[12px] font-medium text-[#090909] hover:bg-[#F4F4F2] disabled:opacity-60"
+                          >
+                            {downloadingReportJobId === d.latest_job_id ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <FileText size={12} />
+                            )}
+                            <span>Generate Privacy &amp; Integrity Report</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setDeleteId(d.id)}
+                          aria-label={`Delete ${d.name}`}
+                          className="p-1.5 rounded-md text-[#888888] hover:text-[#7F1D1D] hover:bg-[#FDF2F2]"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

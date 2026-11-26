@@ -686,4 +686,21 @@ export const api = {
       version: string;
     }>("/api/system/diagnostics"),
   briefPdfUrl: () => `${API_BASE}/api/reports/brief-pdf`,
+  privacyReportPdfUrl: (jobId: string) => `${API_BASE}/api/jobs/${jobId}/privacy-report.pdf`,
+  downloadPrivacyReportPdf: async (jobId: string): Promise<Blob> => {
+    const res = await fetch(`${API_BASE}/api/jobs/${jobId}/privacy-report.pdf`, {
+      credentials: "include",
+    });
+    if (!res.ok) {
+      let msg = `Report generation failed (${res.status})`;
+      try {
+        const errBody = await res.json();
+        msg = errBody.detail || errBody.message || msg;
+      } catch {
+        // ignore parse error
+      }
+      throw new ApiError(res.status, msg);
+    }
+    return await res.blob();
+  },
 };

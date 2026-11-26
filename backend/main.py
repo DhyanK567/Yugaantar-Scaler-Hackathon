@@ -1217,6 +1217,125 @@ def download_job_outputs(job_id: str, request: Request, user: Dict[str, Any] = D
     )
 
 
+@app.get("/api/jobs/{job_id}/privacy-report.pdf")
+def download_job_privacy_report_pdf(
+    job_id: str, request: Request, user: Dict[str, Any] = Depends(require_user)
+):
+    from .privacy_report_pdf import generate_privacy_integrity_pdf
+
+    job = get_job_detail(job_id, user)
+    if job.get("organisation_id"):
+        require_org_access(user, job["organisation_id"])
+
+    with get_db() as conn:
+        dataset = (
+            dict(r)
+            if job.get("dataset_id")
+            and (r := conn.execute("SELECT * FROM datasets WHERE id = ?", (job["dataset_id"],)).fetchone())
+            else None
+        )
+        organisation = (
+            dict(r)
+            if job.get("organisation_id")
+            and (r := conn.execute("SELECT * FROM organisations WHERE id = ?", (job["organisation_id"],)).fetchone())
+            else None
+        )
+        privacy = (
+            dict(r)
+            if (r := conn.execute("SELECT * FROM privacy_assessments WHERE job_id = ? ORDER BY created_at DESC LIMIT 1", (job_id,)).fetchone())
+            else None
+        )
+        clinical = (
+            dict(r)
+            if (r := conn.execute("SELECT * FROM clinical_reports WHERE job_id = ? ORDER BY created_at DESC LIMIT 1", (job_id,)).fetchone())
+            else None
+        )
+        identity = (
+            dict(r)
+            if (r := conn.execute("SELECT * FROM identity_clusters WHERE job_id = ? ORDER BY created_at DESC LIMIT 1", (job_id,)).fetchone())
+            else None
+        )
+        attack_run = (
+            dict(r)
+            if (r := conn.execute("SELECT * FROM attack_runs WHERE job_id = ? ORDER BY created_at DESC LIMIT 1", (job_id,)).fetchone())
+            else None
+        )
+        passport = (
+            dict(r)
+            if (r := conn.execute("SELECT * FROM passports WHERE job_id = ? ORDER BY created_at DESC LIMIT 1", (job_id,)).fetchone())
+            else None
+        )
+
+    job_out = JOBS_DIR / job_id / "output"
+    engine_report = None
+    report_json_path = job_out / "report.json"
+    if report_json_path.is_file():
+        try:
+            engine_report = json.loads(report_json_path.read_text(encoding="utf-8"))
+        except Exception:
+            engine_report = None
+
+    passport_verification = None
+    disk_passport = job_out / "privacy_passport.json"
+    if passport and disk_passport.is_file():
+        try:
+            import sys as _sys
+            if str(STARTER_DIR) not in _sys.path:
+                _sys.path.insert(0, str(STARTER_DIR))
+            from verify_passport import verify_passport_bundle  # type: ignore
+
+            manifest_path = job_out / "dataset_manifest.json"
+            vres = verify_passport_bundle(
+                passport_path=disk_passport,
+                output_dir=job_out,
+                manifest_path=manifest_path if manifest_path.is_file() else None,
+            )
+            payload_obj = json.loads(passport.get("passport_json") or "{}")
+            disk_root = (
+                (payload_obj.get("dataset_provenance") or {}).get("output_dataset_root_hash")
+                or passport.get("manifest_hash")
+            )
+            integrity_ok = bool(vres.get("valid")) and (disk_root == passport.get("manifest_hash"))
+            passport_verification = {
+                "integrity_valid": integrity_ok,
+                "verified_at": passport.get("verified_at") or time.time(),
+            }
+        except Exception:
+            passport_verification = {"integrity_valid": False, "verified_at": None}
+
+    pdf_bytes = generate_privacy_integrity_pdf(
+        job=job,
+        dataset=dataset,
+        organisation=organisation,
+        privacy=privacy,
+        clinical=clinical,
+        identity=identity,
+        attack_run=attack_run,
+        passport=passport,
+        passport_verification=passport_verification,
+        engine_report=engine_report,
+    )
+
+    record_audit_event(
+        action="PRIVACY_REPORT_DOWNLOADED",
+        resource_type="job",
+        resource_id=job_id,
+        outcome="SUCCESS",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user.get("active_role"),
+        organisation_id=job.get("organisation_id"),
+        details=f"Generated Privacy & Integrity PDF report for job {job_id}",
+        ip_address=_client_ip(request),
+    )
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=MediLocker_Privacy_Integrity_Report_{job_id}.pdf"},
+    )
+
+
 # ==============================================================================
 # 5. Privacy, Identity, Clinical, Attack Simulator & Passports
 # ==============================================================================

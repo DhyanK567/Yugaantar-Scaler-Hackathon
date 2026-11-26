@@ -21,6 +21,8 @@ test_output/
 sw-check-*/
 data/jobs/
 data/*.db
+data/*.db-wal
+data/*.db-shm
 
 # Frontend
 frontend/node_modules/
