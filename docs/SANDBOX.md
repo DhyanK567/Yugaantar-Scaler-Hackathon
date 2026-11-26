@@ -1,7 +1,7 @@
 # The sandbox: what a submission can and cannot do
 
 Every team's code is untrusted. It runs on the organiser's machine, next to the hidden
-truth, the attacker's knowledge, the master seed and 299 other teams' work. The sandbox
+truth, the attacker's knowledge, the master seed and every other team's work. The sandbox
 makes sure none of that is reachable, and that every team gets the same resources.
 
 ## Isolation levels

@@ -4,7 +4,7 @@
 # before the event and its SHA-256 is stamped on every scorecard, so teams can
 # check that the rules were not changed after submissions arrived.
 
-[weights]                       # official weights, problem statement section 8
+[weights]                       # official weights, problem statement section 6
 detection = 0.20                # multilingual PII detection & contextual intelligence
 identity_resolution = 0.15      # cross-document identity resolution
 privacy = 0.25                  # adversarial privacy & re-identification resistance
@@ -94,7 +94,7 @@ time_limit_s = 1800
 memory_good_mb = 768
 memory_limit_mb = 4096
 
-[penalties]                     # points off the 100-point total (problem statement section 8)
+[penalties]                     # points off the 100-point total (problem statement section 6)
                                 # the total is NOT floored at zero, so weak teams stay rankable
 per_leaked_identifier = 1.0     # unique direct identifier / full patient name surviving anywhere
 leaked_identifier_cap = 25
@@ -105,7 +105,7 @@ canary_cap = 15
 false_success = 10              # exit code 0 but report missing or inputs silently dropped
 input_tampering = 5             # the submission modified its read-only input
 
-[limits]                        # default sandbox budget (ruling R11)
+[limits]                        # default sandbox budget
 cpus = 2
 memory_mb = 4096
 timeout_s = 900

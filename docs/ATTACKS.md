@@ -85,7 +85,7 @@ A1–A5 are also run on the **raw input** (cached per dataset). Each component i
 team's risk divided by the raw risk, so the scale means "how much of the attack surface
 you removed". It does not depend on how easy the particular hidden dataset happens to be.
 
-## Example readings (`standard` profile, seed `dev-seed-1`)
+## Example readings (a practice-style dataset)
 
 | Submission | A3 record linkage (vs raw) | A4 patients re-identified | A5 targeted success |
 |---|---:|---:|---:|
@@ -94,10 +94,10 @@ you removed". It does not depend on how easy the particular hidden dataset happe
 | redact everything | ≈ 0% | 0% | 0% |
 
 The reference resists profile attacks reasonably well (district + gender + 5-year band
-leaves about 5 people per cell in a 1,200-person registry), but its targeted-attack
+leaves several people per cell in the registry), but its targeted-attack
 exposure stays high. The 56 rare-condition hits show that keeping a rare diagnosis
 next to an exact age band and district identifies the "97-year-old with a rare
-procedure" (Challenge 4) even after every date was shifted. Defending against that
+procedure" (the Re-identification Trap) even after every date was shifted. Defending against that
 needs suppression or coarser generalisation **of the rare records only**, which is the
 k-anonymity-style risk analysis the statement asks for (the Re-identification Trap, and your measured re-identification risk).
 

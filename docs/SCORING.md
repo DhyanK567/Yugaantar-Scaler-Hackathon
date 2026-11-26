@@ -34,7 +34,7 @@ For each key `x` in a unit:
 
 ```
 allowed  = occurrences of x in the input inside a preserve-probe
-           ("Ramesh" inside "Dr. Ramesh Srivastava reviewed the patient")
+           ("Ramesh" inside "Dr. Ramesh reviewed the patient")
 pii_occ  = occurrences of x in the input − allowed
 leaked   = clamp(occurrences of x in the output − allowed, 0, pii_occ)
 leak(x)  = leaked / pii_occ            mention leak = mean over its keys
@@ -99,7 +99,7 @@ resistance  = 1 − risk
 privacy     = resistance × min(1, utility_score / 0.40)
 ```
 
-The **utility coupling** is ruling R13. Privacy is only fully credited for a release that
+The **utility coupling**: privacy is only fully credited for a release that
 keeps at least 40% of its clinical utility, so "delete everything" cannot collect the
 heaviest category.
 
@@ -172,13 +172,9 @@ the ordering, so organisers can show the scale is sane before scoring any team:
 | `baselines/passthrough` | copies everything | −19.48 | −19.48 | −19.47 | −19.47 |
 
 (`small`: seed `calibration-seed`; `standard`: seed `dev-seed-1`; evaluator 1.0.0.) The reference
-was written against dev data. On the chaos round its regexes miss noisy IDs (≈ −25 penalty
-points), unseen address labels leak house and village details, and regional names
-drop name recall. That is the memorisation gap the hidden chaos datasets expose. Since the
-Secret Wards update, planted canaries (−3 each) and WhatsApp forwards also cost the
-reference and the shortcuts points; passthrough now hits every penalty cap. On normal
-data the reference's remaining loss is mostly privacy (cross-document profiles and rare
-conditions still re-identify some patients). That headroom is where strong teams separate.
+was written against practice data. On the unseen-format dataset it loses about 30 points
+(missed identifiers, labels and names it never saw). That is the memorisation gap the hidden
+data exposes, and the headroom where strong teams separate.
 
 Asserted checks on both the normal and the chaos dataset (calibration fails, and teams must not be scored, if any is false):
 

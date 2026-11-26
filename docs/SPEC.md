@@ -31,7 +31,7 @@ RAKSHAK_POLICY = "config/policy.yaml"
 
 ## 2. Execution environment
 
-| Item | Value (default budget, ruling R11) |
+| Item | Value |
 |---|---|
 | CPUs | 2 (enforced with CPU affinity) |
 | Memory | 4,096 MB peak RSS of your **whole process tree** (sampled every 50 ms; killed above it) |
