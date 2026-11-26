@@ -1,0 +1,512 @@
+# GUPTKAVACH
+## The Privacy Firewall for Collaborative Healthcare Intelligence
+
+**Track:** Track 3 — Secret Wards  
+**Project Category:** Healthcare Data Privacy, De-identification & Secure Research Collaboration  
+**Team:** Team Halfwave  
+**Project Vision:** Enabling healthcare organisations to collaborate, research and generate medical intelligence without exposing patient identities.
+
+**Tagline:** Protect the Identity. Preserve the Medicine. Enable Collaboration.
+
+---
+
+# 1. The Problem We Are Solving
+
+Healthcare generates enormous amounts of valuable data every day. Hospitals, diagnostic laboratories, research institutions and healthcare organisations collect patient records containing medical histories, prescriptions, laboratory reports, discharge summaries and clinical observations.
+
+This data has immense potential for medical research, disease pattern analysis, public health studies and improving healthcare delivery.
+
+However, there is a major obstacle: **patient privacy**.
+
+Medical records contain sensitive information such as:
+
+- Patient names and family member names.
+- Phone numbers, Aadhaar and ABHA identifiers.
+- Hospital registration numbers.
+- Addresses, villages, PIN codes and landmarks.
+- Dates of birth and hospital admission dates.
+- Information hidden inside medical notes, scanned text and nested records.
+
+Simply removing a patient's name is not enough. A combination of age, location, dates, rare diseases and other information can still reveal the patient's identity.
+
+There is another challenge: healthcare data is multilingual.
+
+Indian hospitals generate records in English, Hindi, Hinglish and regional-language contexts. A name may be written in multiple scripts or transliterated differently across hospitals.
+
+At the same time, medical information must remain intact.
+
+For example:
+- A patient's name must be removed.
+- A doctor's name should not automatically be removed.
+- A medicine name must remain.
+- Dosages and laboratory values must remain.
+- Clinical observations must retain their original meaning.
+
+Existing simplistic anonymisation approaches can either expose personal information or destroy medically valuable information.
+
+**Our goal is to solve both problems simultaneously.**
+
+# 2. Our Solution — GuptKavach
+
+GuptKavach is an offline, CPU-only healthcare privacy firewall that transforms sensitive healthcare records into privacy-protected, research-usable datasets.
+
+It sits between healthcare data sources and the organisations or researchers who need to use that data.
+
+Instead of merely replacing names with generic labels, GuptKavach understands the structure and context of healthcare records, identifies sensitive information, protects patient identity and preserves clinically meaningful information.
+
+Our system is designed to work without internet access, hosted AI services or large language models.
+
+The core privacy engine uses deterministic rules, multilingual pattern recognition, contextual detection, phonetic matching, conservative identity resolution and privacy-preserving transformations.
+
+Our long-term vision is to create a trusted collaboration ecosystem where multiple healthcare organisations can contribute privacy-protected datasets to research initiatives without unnecessarily exposing patient identities.
+
+# 3. Three Distinctive Innovation Features
+
+These are the three core differentiators around which we are building GuptKavach.
+
+## Feature 1 — Multilingual Patient Identity Continuity Graph
+
+### The problem
+
+The same patient can appear in multiple hospitals under different spellings, languages and registration numbers.
+
+For example:
+
+- Hospital A: Mohammed Zainab
+- Hospital B: मोहम्मद ज़ैनब
+- Hospital C: Mohd. Zenab
+
+A conventional text-matching system may treat these as three different patients.
+
+On the other hand, two unrelated patients may have identical names, creating a dangerous false merge.
+
+### Our approach
+
+GuptKavach creates a privacy-preserving identity continuity graph.
+
+It analyses available identity evidence, including:
+
+- Transliteration and phonetic similarities.
+- Strong identifiers where available.
+- Demographic compatibility.
+- Cross-record evidence.
+- Language and spelling variations.
+
+The system links records only when sufficient evidence exists.
+
+When the evidence is insufficient, it abstains rather than guessing.
+
+### What makes our implementation distinctive
+
+**Identity continuity without identity exposure.**
+
+The system creates a stable, secret-dependent pseudonymous patient identifier, allowing authorised research workflows to recognise records belonging to the same patient without receiving their original identity.
+
+For example:
+
+| Source | Original identity | Protected identity |
+|---|---|---|
+| Hospital A | Mohammed Zainab | PSN-XXXXXX |
+| Hospital B | मोहम्मद ज़ैनब | PSN-XXXXXX |
+| Hospital C | Mohd. Zenab | PSN-XXXXXX |
+
+The actual pseudonym is generated by the engine; the same patient can retain the same pseudonym across supported records under the same secret.
+
+**Our key innovation:** We prioritise correct identity linkage over aggressive matching. If the evidence is weak, we refuse to create a link.
+
+## Feature 2 — Clinical-Semantic Preservation Firewall
+
+### The problem
+
+Anonymisation systems often struggle to distinguish personal information from medically meaningful information.
+
+Consider these examples:
+
+- "Patient Asha Rajput" — personal identity that must be protected.
+- "ASHA worker advised the patient" — ASHA is a healthcare role.
+- "Dr. Ramesh prescribed medication" — the doctor's name is not necessarily the patient's identity.
+- "C/O chest pain" — C/O is a clinical notation.
+- "C/O Ramesh" — may refer to a relative.
+- "Serum sodium: 138 mmol/L" — clinically important.
+- "Patient age: 42 years" — potentially identifying and may require transformation.
+
+A basic keyword-based anonymiser can easily destroy valuable clinical information or miss personal information.
+
+### Our approach
+
+GuptKavach introduces a clinical-semantic preservation layer.
+
+Every detected field is evaluated using its context, structural position, language patterns and medical relevance.
+
+The system distinguishes between:
+
+1. Direct personal identifiers.
+2. Indirect identifiers.
+3. Clinical information.
+4. Healthcare professionals and organisational identities.
+5. Ambiguous information requiring conservative treatment.
+
+It then applies field-specific privacy transformations.
+
+Examples:
+
+| Information | Treatment |
+|---|---|
+| Patient name | Pseudonymise or redact |
+| Phone number | Remove |
+| Aadhaar / ABHA | Remove |
+| Patient address | Generalise or suppress |
+| Date of birth | Privacy-preserving transformation |
+| Medicine name | Preserve |
+| Dosage | Preserve |
+| Laboratory result | Preserve |
+| Clinical diagnosis | Preserve |
+| Doctor's name | Preserve where appropriate |
+
+### What makes our implementation distinctive
+
+**Privacy protection must not come at the cost of medical usefulness.**
+
+Rather than treating the entire document as sensitive text, GuptKavach protects sensitive information at the field and contextual level.
+
+It also handles multilingual variations and structured healthcare formats.
+
+The objective is to produce data that is safer to use while preserving its clinical value.
+
+## Feature 3 — Adversarial Privacy Rehearsal and Leak Detection
+
+### The problem
+
+A dataset can appear anonymised while still exposing patient information through hidden fields, metadata, encoded content, filenames or combinations of indirect identifiers.
+
+For example:
+
+- A patient name is removed from the main report but remains in a nested JSON field.
+- A source filename contains a hospital registration number.
+- An encoded attachment contains personal information.
+- A rare diagnosis combined with a location and date can reveal a patient.
+- An error log accidentally contains an original identifier.
+
+A successful sanitisation operation does not automatically prove that the output is safe.
+
+### Our approach
+
+We want GuptKavach to challenge its own output before it is released.
+
+Our adversarial privacy rehearsal layer examines sanitised datasets from the perspective of a potential attacker.
+
+It tests for:
+
+- Direct identifier leakage.
+- Multilingual and transliterated name leakage.
+- Metadata and filename leakage.
+- Encoded-data leakage.
+- Residual identifiers in nested records.
+- Re-identification risks caused by combinations of indirect identifiers.
+- Information exposure through errors and temporary files.
+
+We also use synthetic canary values during testing to detect whether known sensitive test patterns survive sanitisation.
+
+### What makes our implementation distinctive
+
+**Instead of simply declaring a dataset anonymised, we actively try to discover how it could still expose someone.**
+
+Our proposed privacy release process combines:
+
+1. Sanitisation.
+2. Adversarial testing.
+3. Clinical utility measurement.
+4. Leak detection.
+5. Release decision and audit evidence.
+
+If a critical privacy check fails, the dataset should not be marked ready for release.
+
+The long-term goal is to make privacy validation a mandatory step before healthcare data is shared.
+
+# 4. How GuptKavach Works
+
+Our system follows a multi-stage processing pipeline.
+
+### Stage 1 — Multi-format Data Ingestion
+
+The system accepts healthcare data from different hospital systems.
+
+Supported formats and planned integrations include:
+
+- CSV datasets.
+- Nested JSON records.
+- FHIR R4 bundles.
+- Discharge summaries.
+- Prescriptions.
+- Nursing notes.
+
+The system identifies the file type and extracts the relevant content without silently skipping unsupported or malformed files.
+
+### Stage 2 — Multilingual Sensitive Information Detection
+
+The detection engine identifies sensitive information using:
+
+- Regular expressions.
+- Context-aware rules.
+- English, Hindi and Hinglish patterns.
+- Devanagari and Latin-script matching.
+- Name and transliteration matching.
+- Structural field classification.
+- Medical-context protection rules.
+
+### Stage 3 — Patient Identity Resolution
+
+The identity engine evaluates whether different records belong to the same patient.
+
+It uses strong identifiers and corroborating evidence while checking demographic compatibility.
+
+It generates consistent pseudonyms for confidently linked records.
+
+Uncertain records remain unlinked.
+
+### Stage 4 — Privacy-Preserving Transformation
+
+The privacy engine applies appropriate transformations:
+
+- Pseudonymisation.
+- Redaction.
+- Date shifting.
+- Age generalisation.
+- PIN-code generalisation.
+- Village and locality suppression.
+- Sensitive metadata removal.
+
+The transformation is designed to preserve medical meaning and relationships between relevant dates.
+
+### Stage 5 — Adversarial Validation
+
+The system checks the generated output for:
+
+- Residual personal information.
+- Canary exposure.
+- Hidden metadata leakage.
+- Encoded content leakage.
+- Structural integrity.
+- Medical information preservation.
+- Patient-linking quality.
+
+### Stage 6 — Protected Dataset Release
+
+Only outputs that satisfy the required validation conditions are considered ready for release.
+
+The system also generates structured records and validation evidence for review.
+
+# 5. Proposed System Architecture
+
+```text
+          HEALTHCARE ORGANISATIONS
+       ┌──────────┬──────────┬──────────┐
+       │ Hospital │ Hospital │ Diagnostic│
+       │    A     │    B     │    Lab C  │
+       └────┬─────┴────┬─────┴─────┬─────┘
+            │          │           │
+            └──────────┼───────────┘
+                       │
+                       ▼
+             MULTI-FORMAT INGESTION
+                       │
+                       ▼
+          MULTILINGUAL DETECTION ENGINE
+                       │
+                       ▼
+           PATIENT IDENTITY RESOLUTION
+                       │
+                       ▼
+          PRIVACY TRANSFORMATION ENGINE
+                       │
+                       ▼
+           ADVERSARIAL PRIVACY REHEARSAL
+                       │
+                       ▼
+             CLINICAL UTILITY CHECK
+                       │
+                       ▼
+             PROTECTED DATASET OUTPUT
+                       │
+           ┌───────────┼────────────┐
+           ▼           ▼            ▼
+        Research    Analytics     Audit &
+        Partners    Workflows    Governance
+```
+
+The core engine is independently executable and does not depend on the web application.
+
+The collaboration interface is a separate layer built around the privacy engine.
+
+# 6. Our Technology Approach
+
+We are prioritising reliability, explainability, offline execution and reproducibility.
+
+| Layer | Technology / Approach |
+|---|---|
+| Core engine | Python |
+| Data processing | Python standard libraries and suitable lightweight libraries |
+| Detection | Regex, contextual rules, gazetteers and classical methods |
+| Language handling | Transliteration and phonetic normalisation |
+| Identity resolution | Blocking, evidence scoring and Union-Find clustering |
+| Privacy protection | HMAC-based pseudonymisation and deterministic transformations |
+| Healthcare interoperability | CSV, JSON and FHIR R4 |
+| Backend | FastAPI |
+| Frontend | Next.js, React, TypeScript |
+| Database | PostgreSQL for the application layer |
+| Deployment | Docker and offline-compatible execution |
+
+**Important technical commitment:** The evaluated privacy engine will operate fully offline and CPU-only. It will not depend on GPT, Gemini, Llama, Claude, other large language models, hosted AI APIs or prohibited pretrained transformer models.
+
+The core engine will remain independent of the platform interface.
+
+# 7. Our Healthcare Collaboration Ecosystem
+
+Our long-term objective is not to stop at anonymising individual files.
+
+We envision GuptKavach becoming a trusted privacy infrastructure layer for healthcare collaboration.
+
+Consider this scenario:
+
+- Hospital A has patient records.
+- Hospital B has additional records.
+- Diagnostic Lab C has laboratory information.
+- A research institution wants to study disease patterns across these organisations.
+
+Normally, sharing the underlying records creates serious privacy and governance concerns.
+
+With GuptKavach, each organisation can process its own records through the privacy engine and contribute permitted, protected outputs.
+
+The research institution can then work with approved data without needing direct access to the patients' original identities.
+
+For the initial implementation, we will demonstrate this using synthetic organisations and synthetic datasets. Real-world integrations and more advanced distributed collaboration mechanisms are future extensions.
+
+# 8. What We Intend to Demonstrate
+
+Our demonstration will tell one connected story.
+
+### Scenario: Cross-Hospital Patient Privacy
+
+**Step 1:** Three synthetic healthcare organisations upload their records.
+
+**Step 2:** GuptKavach identifies personal information in English, Hindi and Hinglish.
+
+**Step 3:** The identity engine recognises records that confidently belong to the same patient despite differences in spelling and language.
+
+**Step 4:** Sensitive information is transformed while medical values and diagnoses are preserved.
+
+**Step 5:** The adversarial testing layer attempts to identify residual privacy leaks.
+
+**Step 6:** A researcher requests a permitted cross-hospital dataset.
+
+**Step 7:** The organisations review the request and approve the protected data-sharing workflow.
+
+**Step 8:** The system presents the protected output and its validation evidence.
+
+The demo will use actual engine outputs and measured results rather than fabricated performance claims.
+
+# 9. Our Success Metrics
+
+We will evaluate the system using measurable criteria.
+
+| Evaluation area | Our target |
+|---|---|
+| Personal information leakage | Zero detected leaks in the test suite |
+| Canary exposure | Zero detected canary values |
+| Clinical preservation | Maximum preservation of expected medical values |
+| Patient identity precision | No incorrect patient merges in the evaluation dataset |
+| Patient identity recall | Improve while maintaining conservative matching |
+| File integrity | No silent skips or raw broken-file copies |
+| Reproducibility | Identical outputs for identical inputs and secrets |
+| Offline execution | No network dependency |
+| Performance | Reliable execution within the organiser's resource limits |
+
+These are engineering targets, not claims of universal privacy guarantees. Actual results will be reported using the official evaluation datasets and tools.
+
+# 10. What Makes GuptKavach Different?
+
+Most basic anonymisation workflows focus on removing identifiers.
+
+GuptKavach is designed around three connected questions:
+
+1. Can we recognise the same patient across different hospitals and languages without exposing their identity?
+2. Can we remove sensitive information without destroying clinically useful data?
+3. Can we actively challenge the sanitised output to discover privacy failures before releasing it?
+
+Our differentiation comes from combining these capabilities into a single offline healthcare privacy workflow.
+
+We are not building another medical chatbot or another document-redaction interface.
+
+We are building a privacy infrastructure layer that makes responsible healthcare data collaboration possible.
+
+# 11. Development Roadmap
+
+### Phase 1 — Privacy Engine
+
+- Multi-format ingestion.
+- Multilingual PII detection.
+- Clinical-context protection.
+- Patient identity resolution.
+- Pseudonymisation.
+- Privacy transformations.
+
+### Phase 2 — Adversarial Validation
+
+- Leak detection.
+- Canary testing.
+- Metadata and encoded-content inspection.
+- FHIR integrity checks.
+- Clinical utility evaluation.
+- Determinism and secret separation testing.
+
+### Phase 3 — Collaboration Platform
+
+- Organisation workspaces.
+- Dataset management.
+- Privacy processing dashboard.
+- Research requests.
+- Organisation approval workflows.
+- Audit and governance interface.
+
+### Phase 4 — Final Hardening and Demonstration
+
+- Hidden-format testing.
+- False-positive and false-negative analysis.
+- Performance optimisation.
+- Documentation.
+- Reproducible demonstration.
+- Submission preparation.
+
+# 12. Future Scope
+
+After the initial implementation, we aim to explore:
+
+- More Indian regional-language support.
+- Additional healthcare interoperability standards.
+- Privacy-preserving cohort discovery.
+- Organisation-specific privacy policies.
+- Stronger re-identification risk estimation.
+- Distributed collaboration between hospitals.
+- Formal privacy governance and compliance workflows.
+
+These are future extensions and will not be represented as already implemented capabilities.
+
+# 13. Our Vision
+
+Healthcare data should not remain isolated because organisations cannot safely collaborate.
+
+At the same time, medical innovation should never require patients to surrender their privacy.
+
+GuptKavach aims to bridge this gap.
+
+We want hospitals to collaborate, researchers to discover patterns and healthcare institutions to generate useful intelligence while protecting the identities of the people behind the data.
+
+**We believe the future of healthcare intelligence depends not only on how much data we can collect, but also on how responsibly we can use it.**
+
+---
+
+# GUPTKAVACH
+
+### Protect the Identity. Preserve the Medicine. Enable Collaboration.
+
+**An offline-first healthcare privacy firewall built for a world where medical collaboration and patient privacy must coexist.**

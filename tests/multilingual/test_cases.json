@@ -1,0 +1,182 @@
+[
+  {
+    "id": "ml_en_01",
+    "language": "English",
+    "script": "Latin",
+    "category": "personal_name",
+    "text": "Patient Amit Kumar presented with acute fever and chills.",
+    "expected_pii": ["Amit Kumar"],
+    "expected_safe": ["fever", "chills"],
+    "description": "Standard two-word Indian name in clinical narrative"
+  },
+  {
+    "id": "ml_en_02",
+    "language": "English",
+    "script": "Latin",
+    "category": "three_word_name",
+    "text": "Consultation note for Rajesh Kumar Sharma, complaining of persistent cough.",
+    "expected_pii": ["Rajesh Kumar Sharma"],
+    "expected_safe": ["cough"],
+    "description": "Three-word Indian name"
+  },
+  {
+    "id": "ml_en_03",
+    "language": "English",
+    "script": "Latin",
+    "category": "initial_based_name",
+    "text": "Patient K. V. Ramanathan was admitted to ward 4 with chest pain.",
+    "expected_pii": ["K. V. Ramanathan"],
+    "expected_safe": ["chest pain", "ward 4"],
+    "description": "Initial-based South Indian name format"
+  },
+  {
+    "id": "ml_en_04",
+    "language": "English",
+    "script": "Latin",
+    "category": "relationship_co_chief_complaint",
+    "text": "Pt C/O fever and bodyache for 3 days. S/O Ramesh Chandra.",
+    "expected_pii": ["Ramesh Chandra"],
+    "expected_safe": ["C/O fever", "bodyache"],
+    "description": "C/O used as chief complaint vs S/O used as son of relationship"
+  },
+  {
+    "id": "ml_en_05",
+    "language": "English",
+    "script": "Latin",
+    "category": "relationship_care_of",
+    "text": "Attendant: Sunita Devi C/O Suresh Kumar Sharma, resident of Jaipur.",
+    "expected_pii": ["Sunita Devi", "Suresh Kumar Sharma"],
+    "expected_safe": ["Jaipur"],
+    "description": "C/O used as Care-Of relationship with relative name; geographic city preserved in clinical context"
+  },
+  {
+    "id": "ml_hi_01",
+    "language": "Hindi",
+    "script": "Devanagari",
+    "category": "personal_name",
+    "text": "मरीज अमित कुमार को तेज बुखार और सिरदर्द की शिकायत है।",
+    "expected_pii": ["अमित कुमार"],
+    "expected_safe": ["तेज बुखार", "सिरदर्द"],
+    "description": "Standard Devanagari Hindi patient name with symptoms"
+  },
+  {
+    "id": "ml_hi_02",
+    "language": "Hindi",
+    "script": "Devanagari",
+    "category": "relationship_hindi",
+    "text": "मरीज: प्रिया शर्मा, पिता: रमेश चंद्र, माता: सुशीला देवी, निवासी: लखनऊ।",
+    "expected_pii": ["प्रिया शर्मा", "रमेश चंद्र", "सुशीला देवी"],
+    "expected_safe": ["मरीज", "लखनऊ"],
+    "description": "Hindi relationship terms (पिता, माता) and location"
+  },
+  {
+    "id": "ml_hi_03",
+    "language": "Hindi",
+    "script": "Devanagari",
+    "category": "cross_script_transliteration",
+    "text": "नाम: राजेश वर्मा (Rajesh Verma), उम्र 45 वर्ष, ब्लड प्रेशर सामान्य।",
+    "expected_pii": ["राजेश वर्मा", "Rajesh Verma"],
+    "expected_safe": ["ब्लड प्रेशर सामान्य"],
+    "description": "Cross-script dual representation of name"
+  },
+  {
+    "id": "ml_hi_04",
+    "language": "Hindi",
+    "script": "Devanagari",
+    "category": "honorific_variants",
+    "text": "आशा जी (Asha ji) ने बाबूलाल जी को अस्पताल पहुंचाया।",
+    "expected_pii": ["बाबूलाल जी"],
+    "expected_safe": [],
+    "description": "Honorific variants (जी, बाबू) and person names"
+  },
+  {
+    "id": "ml_hinglish_01",
+    "language": "Hinglish",
+    "script": "Latin",
+    "category": "personal_name_hinglish",
+    "text": "Mareez Pooja Kumari ko pichhle 2 din se tez bukhar hai. Pita ka naam Mohan Lal.",
+    "expected_pii": ["Pooja Kumari", "Mohan Lal"],
+    "expected_safe": ["bukhar"],
+    "description": "Hinglish patient narrative with relationship (Pita ka naam)"
+  },
+  {
+    "id": "ml_hinglish_02",
+    "language": "Hinglish",
+    "script": "Latin",
+    "category": "relationship_hinglish",
+    "text": "Attendant: Vikram Singh, pati of Sunita Devi, resident of Gopalganj.",
+    "expected_pii": ["Vikram Singh", "Sunita Devi"],
+    "expected_safe": ["Gopalganj"],
+    "description": "Hinglish relationship term (pati of)"
+  },
+  {
+    "id": "ml_eponym_01",
+    "language": "English",
+    "script": "Latin",
+    "category": "clinical_eponym_preservation",
+    "text": "Patient diagnosed with Parkinson's disease and Bell's palsy, prescribed Levodopa.",
+    "expected_pii": [],
+    "expected_safe": ["Parkinson's disease", "Bell's palsy", "Levodopa"],
+    "description": "Medical eponyms must not be redacted as personal names"
+  },
+  {
+    "id": "ml_eponym_02",
+    "language": "English",
+    "script": "Latin",
+    "category": "clinical_role_vs_name",
+    "text": "ASHA worker visited the PHC regarding pulse polio drive.",
+    "expected_pii": [],
+    "expected_safe": ["ASHA worker", "PHC"],
+    "description": "ASHA healthcare role must be preserved, not redacted as person Asha"
+  },
+  {
+    "id": "ml_vitals_01",
+    "language": "English",
+    "script": "Latin",
+    "category": "vitals_and_dosages",
+    "text": "BP: 120/80 mmHg, Pulse: 72 bpm, Tab Dolo 650 mg TDS, Metformin 500 mg BD.",
+    "expected_pii": [],
+    "expected_safe": ["120/80", "Dolo 650 mg", "Metformin 500 mg"],
+    "description": "Vitals and dosages must never be confused with Aadhaar, PAN, or phone"
+  },
+  {
+    "id": "ml_id_01",
+    "language": "English",
+    "script": "Latin",
+    "category": "national_identifiers",
+    "text": "Patient Aadhaar: 9876 5432 1098, ABHA: 12-3456-7890-1234, PAN: ABCDE1234F.",
+    "expected_pii": ["9876 5432 1098", "12-3456-7890-1234", "ABCDE1234F"],
+    "expected_safe": [],
+    "description": "Detection of Aadhaar, ABHA, and PAN"
+  },
+  {
+    "id": "ml_id_02",
+    "language": "Hindi",
+    "script": "Devanagari",
+    "category": "hindi_identifiers",
+    "text": "मरीज का आधार नंबर 9876 5432 1098 और मोबाइल 9876543210 है।",
+    "expected_pii": ["9876 5432 1098", "9876543210"],
+    "expected_safe": [],
+    "description": "Hindi context identifier detection"
+  },
+  {
+    "id": "ml_fam_01",
+    "language": "English",
+    "script": "Latin",
+    "category": "family_history_preservation",
+    "text": "Family history of diabetes mellitus and hypertension in father and mother.",
+    "expected_pii": [],
+    "expected_safe": ["Family history of diabetes mellitus", "hypertension", "father", "mother"],
+    "description": "Family medical history phrasing without personal names must be preserved"
+  },
+  {
+    "id": "ml_practitioner_01",
+    "language": "English",
+    "script": "Latin",
+    "category": "practitioner_context",
+    "text": "Examined by Dr. Ramesh Srivastava, MD (Medicine), Reg No: MCI-54321.",
+    "expected_pii": [],
+    "expected_safe": ["Dr. Ramesh Srivastava", "MD (Medicine)", "MCI-54321"],
+    "description": "Healthcare provider name and practitioner registration numbers are preserved"
+  }
+]
