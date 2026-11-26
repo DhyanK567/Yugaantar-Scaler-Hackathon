@@ -17,15 +17,11 @@ pnpm build
 if ($LASTEXITCODE -ne 0) { throw "Next.js build failed" }
 Pop-Location
 
-# 3. Stage standalone + Node runtime
-Write-Host "[3/4] Staging standalone frontend and Node runtime..."
+# 3. Stage static export
+Write-Host "[3/4] Staging Next.js static export..."
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue desktop\web_dist, desktop\node_runtime
-New-Item -ItemType Directory -Force -Path desktop\web_dist, desktop\node_runtime | Out-Null
-robocopy frontend\.next\standalone desktop\web_dist /E | Out-Null
-New-Item -ItemType Directory -Force -Path desktop\web_dist\.next\static, desktop\web_dist\public | Out-Null
-robocopy frontend\.next\static desktop\web_dist\.next\static /E | Out-Null
-robocopy frontend\public desktop\web_dist\public /E | Out-Null
-Copy-Item (Get-Command node).Source desktop\node_runtime\node.exe
+New-Item -ItemType Directory -Force -Path desktop\web_dist | Out-Null
+robocopy frontend\out desktop\web_dist /E | Out-Null
 
 # 4. Electron Builder (NSIS + Portable)
 Write-Host "[4/4] Packaging NSIS Installer and Portable EXE..."
