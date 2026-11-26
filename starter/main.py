@@ -23,6 +23,7 @@ from collections import Counter
 from pathlib import Path
 
 from raksha_engine.attacker import RecordProfile, simulate_attacks
+from raksha_engine.clinical_validator import validate_fhir_r4_bundle
 from raksha_engine.linking import (
     RecordClues,
     extract_clues_from_text,
@@ -453,6 +454,9 @@ def main() -> int:
     files_report: list[dict] = []
     records: list[dict] = []
     used_out_paths: set[str] = set()
+    fhir_bundles_checked = 0
+    fhir_resources_checked = 0
+    fhir_failures: list[dict[str, str]] = []
 
     for item in parsed_files:
         rel = item["rel"]
@@ -582,6 +586,12 @@ def main() -> int:
                             )
                             Stats.identifiers += n_id
                             clean_data[clean_k] = c_v
+                if isinstance(clean_data, dict) and clean_data.get("resourceType") == "Bundle":
+                    fres = validate_fhir_r4_bundle(clean_data, location=out_rel)
+                    fhir_bundles_checked += fres.bundles_checked
+                    fhir_resources_checked += fres.resources_checked
+                    for fl in fres.failures:
+                        fhir_failures.append({"code": fl.code, "location": fl.location, "detail": fl.detail})
                 out_text = json.dumps(clean_data, ensure_ascii=False, indent=2) + "\n"
 
             else:  # txt
@@ -677,6 +687,12 @@ def main() -> int:
                 "note": "estimated_risk_score is a structural index (0-100), distinct from measured group size k",
             },
             "mitigation_actions": dict(sorted(mitigation_actions.items())),
+        },
+        "clinical_integrity": {
+            "fhir_bundles_checked": fhir_bundles_checked,
+            "fhir_resources_checked": fhir_resources_checked,
+            "fhir_validation_passed": len(fhir_failures) == 0,
+            "fhir_failures": fhir_failures[:20],
         },
         "timing": {"seconds": round(time.monotonic() - t0, 2)},
         "resources": {"peak_rss_mb": _peak_rss_mb()},

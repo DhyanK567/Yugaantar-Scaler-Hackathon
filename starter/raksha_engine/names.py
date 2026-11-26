@@ -133,9 +133,18 @@ CLINICAL_STOPWORDS = {
     "hospital", "clinic", "pathology", "pharmacy", "billing", "claim", "helpdesk", "ticket",
     "worker", "workers", "nurse", "duty", "staff", "attendant", "multispeciality",
     "charitable", "sadan", "seva", "trust", "foundation", "laboratory", "center", "centre",
+    "apollo", "department", "cardiology", "neurology", "oncology", "pediatrics", "orthopedics",
+    "myocardial", "infarction", "lymphoma", "chronic", "kidney", "tuberculosis",
+    "units", "twice", "thrice", "daily", "every", "hours", "hour", "hr", "hrs", "days", "weeks",
+    "oral", "intravenous", "subcutaneous", "topical", "drops", "ointment", "cream", "inhaler",
+    "bd", "tds", "qid", "od", "hs", "sos", "prn", "mg", "mcg", "ml", "mmol", "mmhg", "bpm", "kg", "cm", "dl",
+}
+
+_EPONYM_WORDS = {
     "addison", "addisons", "parkinson", "parkinsons", "crohn", "crohns", "hodgkin", "graves",
     "alzheimer", "alzheimers", "cushing", "bell", "guillain", "barre", "kawasaki", "meniere",
 }
+_EPONYM_SUFFIXES = {"disease", "syndrome", "lymphoma", "palsy", "triad", "sign"}
 
 # Patterns for labeled names & relatives in free text
 RX_LABELED_NAME = re.compile(
@@ -173,8 +182,12 @@ RX_CARE_OF_NAME = re.compile(
     r"(?m)(?P<rel>\bC/O\s+)(?P<name>[A-Z][a-z]{2,18}(?:\s+[A-Z][a-z]{2,18}){1,2})(?=\s*(?:,|\n|$))"
 )
 
-# Doctor prefix guard: matches "Dr. Ramesh Srivastava" or "Dr Ramesh"
+# Doctor prefix guard & clinical organization/department guard
 RX_DOCTOR = re.compile(r"\bDr\.?\s+[A-Z][a-zA-Z.]+(?:\s+[A-Z][a-zA-Z]+){0,2}")
+RX_ORG_PHRASE = re.compile(
+    r"\b(?:(?:[A-Z][A-Za-z]+\s+){1,3}(?:Hospital|Medical\s+Center|Medical\s+Centre|Clinic|Institute|Nursing\s+Home)|"
+    r"Department\s+of\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,2})\b"
+)
 
 
 def is_clinical_phrase(text: str) -> bool:
@@ -183,7 +196,13 @@ def is_clinical_phrase(text: str) -> bool:
         return False
     if "asha" in toks and (text.strip() == "ASHA" or "worker" in toks or "workers" in toks):
         return True
-    return any(t in CLINICAL_STOPWORDS for t in toks)
+    if any(t in CLINICAL_STOPWORDS for t in toks):
+        return True
+    if any(t in _EPONYM_WORDS for t in toks):
+        # Treat eponym as clinical when single-word, possessive ('s), or paired with clinical suffix
+        if len(toks) == 1 or "'" in text or any(t in _EPONYM_SUFFIXES for t in toks):
+            return True
+    return False
 
 
 class CorpusNameIndex:
@@ -223,8 +242,8 @@ class CorpusNameIndex:
         escaped = [re.escape(c) for c in candidates if len(c) >= 4]
         if not escaped:
             return None
-        # Match whole-word boundaries (works for Latin; for Devanagari, \b or whitespace/punct)
-        pattern = r"(?<!\w)(?:" + "|".join(escaped) + r")(?!\w)"
+        # Match whole-word boundaries while never matching all-caps ASHA acronym
+        pattern = r"(?<!\w)(?!(?-i:ASHA)\b)(?:" + "|".join(escaped) + r")(?!\w)"
         self._compiled_rx = re.compile(pattern, re.IGNORECASE)
         return self._compiled_rx
 
@@ -251,7 +270,7 @@ def redact_names_in_text(
     while strictly preserving Doctor names and clinical phrases.
     """
     count = 0
-    # 1. Protect "Dr. <Name>" spans with temporary placeholders
+    # 1. Protect "Dr. <Name>" and clinical organization/department spans with temporary placeholders
     doc_spans: list[str] = []
 
     def _save_doc(m: re.Match[str]) -> str:
@@ -259,6 +278,7 @@ def redact_names_in_text(
         return f"__RAKSHA_DOC_{len(doc_spans) - 1}__"
 
     work = RX_DOCTOR.sub(_save_doc, text)
+    work = RX_ORG_PHRASE.sub(_save_doc, work)
 
     # 2. Relatives: S/o, D/o, W/o, C/O <Name>
     def _sub_rel(m: re.Match[str]) -> str:
@@ -326,7 +346,10 @@ def redact_names_in_text(
             reverse=True,
         )
         if safe_firsts:
-            fn_rx = re.compile(r"(?<!\w)(?!ASHA\b)(?:" + "|".join(re.escape(f) for f in safe_firsts) + r")(?:'s)?(?!\w)")
+            fn_rx = re.compile(
+                r"(?<!\w)(?!(?-i:ASHA)\b)(?:" + "|".join(re.escape(f) for f in safe_firsts) + r")(?:'s)?(?!\w)",
+                re.IGNORECASE,
+            )
             work, n_fn = fn_rx.subn("[PATIENT_NAME]", work)
             count += n_fn
 

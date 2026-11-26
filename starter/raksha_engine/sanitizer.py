@@ -350,7 +350,7 @@ def sanitize_json_node(
                 k, name_index, None, b"", decode_b64=False, local_first_names=local_first_names
             )
             tot += nk
-            if rtype in _NON_PERSON_FHIR_TYPES and k == "name" and isinstance(v, str):
+            if rtype in _NON_PERSON_FHIR_TYPES and k == "name":
                 c_v, nv, gv = v, 0, False
             else:
                 c_v, nv, gv = sanitize_json_node(
