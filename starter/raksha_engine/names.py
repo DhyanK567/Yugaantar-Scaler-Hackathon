@@ -109,7 +109,7 @@ _EPONYM_SUFFIXES = {"disease", "syndrome", "lymphoma", "palsy", "triad", "sign"}
 
 RX_LABELED_NAME = re.compile(
     r"(?im)(?P<prefix>\b(?:Patient\s*Name|Pt\.?\s*Name|Patient|Pt\.|Beneficiary|Name|Report\s+of|"
-    r"नाम|मरीज|रोगी\s*का\s*नाम)\s*[:\-]\s*)"
+    r"Mareez|Rogi(?:\s+ka\s+naam)?|नाम|मरीज|रोगी\s*का\s*नाम)\s*[:\-]\s*)"
     r"(?!Dr\.?\s)(?P<name>[A-Za-z\u0900-\u097f][A-Za-z\u0900-\u097f.\s]{1,45}?)"
     r"(?=\s*(?:\n|,|;|\||आयु|Age|\d+\s*(?:Y|yrs|वर्ष)|$))"
 )
@@ -134,17 +134,17 @@ RX_WHATSAPP_SENDER = re.compile(
 # Contextual person roles (witness, caller, visitor/attendant)
 RX_CONTEXT_PERSON = re.compile(
     r"(?m)(?P<prefix>(?i:\bwitnessed\s+by\s+|\bcalled\s+by\s+|\battendant\s*[:\-]\s*)|\b\d{1,2}:\d{2}\s*-\s*)"
-    r"(?!Dr\.?\s)(?P<name>[A-Z][a-z]{1,18}(?:\s+[A-Z][a-z]{1,18}){1,2})(?=\s*(?:\(|,|;|\n|$|\d))"
+    r"(?!Dr\.?\s)(?P<name>[A-Z][a-z]{1,18}(?:\s+[A-Z][a-z]{1,18}){1,2})(?=\s*(?:\(|,|;|\n|$|\d|(?i:C/O|S/O|D/O|W/O|H/O)\b))"
 )
 
 # Multilingual Relatives (S/o, D/o, W/o, H/o, Caregiver, Father, Mother, etc. in English & Hindi)
 RX_RELATIVE = re.compile(
-    r"(?m)(?P<rel>\b(?:"
+    r"(?m)(?P<rel>(?<!\w)(?:"
     r"S/o|D/o|W/o|H/o|s/o|d/o|w/o|h/o|"
     r"Father|Husband|Wife|Mother|Son|Daughter|Guardian|Caregiver|Attendant|Witness|"
     r"पिता|माता|पति|पत्नी|पुत्र|पुत्री|बेटा|बेटी|के\s+पुत्र|की\s+पत्नी|सपुत्र|वल्द|अभिभावक|परिचारक|गवाह|"
-    r"pita|mata|pati|patni|beta|beti|walad"
-    r")\b(?:\s*[:\-]\s*|\s+))"
+    r"pita\s+ka\s+naam|pita|mata|pati|patni|beta|beti|walad"
+    r")(?:\s*[:\-]\s*|\s+(?:of\s+)?))"
     r"(?P<name>[A-Za-z\u0900-\u097f][A-Za-z\u0900-\u097f.\s]{1,35}?)(?=\s*(?:\n|,|;|\)|$))"
 )
 

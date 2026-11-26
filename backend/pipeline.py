@@ -30,7 +30,7 @@ if str(STARTER_DIR) not in sys.path:
     sys.path.insert(0, str(STARTER_DIR))
 
 from raksha_engine.attacker import RecordProfile, simulate_attacks  # type: ignore
-from raksha_engine.clinical_validator import validate_fhir_r4_bundle  # type: ignore
+from raksha_engine.clinical_validator import analyze_clinical_drift, validate_fhir_r4_bundle  # type: ignore
 
 DATA_DIR = Path(os.environ.get("MEDILOCKER_DATA_DIR") or (REPO_ROOT / "data"))
 JOBS_DIR = DATA_DIR / "jobs"
@@ -114,63 +114,62 @@ def _scan_canaries(input_dir: Path, output_dir: Path) -> Dict[str, Any]:
 
 
 def _evaluate_clinical_integrity(input_dir: Path, sanitized_dir: Path) -> Dict[str, Any]:
-    expected = 0
-    preserved = 0
-    fhir_bundles = 0
-    fhir_valid = 0
-    fhir_failures = 0
-
-    input_values: List[str] = []
-    for p in input_dir.rglob("*"):
+    input_texts: List[str] = []
+    for p in sorted(input_dir.rglob("*")):
         if p.is_file() and p.suffix.lower() in {".txt", ".csv", ".tsv", ".json", ".jsonl"}:
             try:
-                txt = p.read_text(encoding="utf-8", errors="ignore")
-                input_values.extend(CLINICAL_VALUE_RE.findall(txt))
+                input_texts.append(p.read_text(encoding="utf-8", errors="ignore"))
             except Exception:
                 pass
 
-    sanitized_text_all: List[str] = []
+    sanitized_texts: List[str] = []
+    fhir_bundles: List[dict] = []
     if sanitized_dir.exists():
-        for p in sanitized_dir.rglob("*"):
+        for p in sorted(sanitized_dir.rglob("*")):
             if p.is_file():
                 try:
                     txt = p.read_text(encoding="utf-8", errors="ignore")
-                    sanitized_text_all.append(txt)
+                    sanitized_texts.append(txt)
                     if p.suffix.lower() == ".json":
                         obj = json.loads(txt)
                         if isinstance(obj, dict) and obj.get("resourceType") == "Bundle":
-                            fhir_bundles += 1
-                            res = validate_fhir_r4_bundle(obj, p.name)
-                            if res.valid:
-                                fhir_valid += 1
-                            else:
-                                fhir_failures += len(res.failures)
+                            fhir_bundles.append(obj)
                 except Exception:
                     pass
 
-    joined_sanitized = "\n".join(sanitized_text_all)
-    expected = len(input_values)
-    for val in input_values:
-        if val in joined_sanitized:
-            preserved += 1
+    drift = analyze_clinical_drift(input_texts, sanitized_texts, fhir_bundles=fhir_bundles)
+    ov = drift["overall"]
+    cats = drift["categories"]
 
-    missing = max(0, expected - preserved)
+    def _cat_ratio(name: str) -> Optional[float]:
+        c = cats.get(name, {})
+        exp = c.get("expected", 0)
+        return round(c["preserved"] / exp, 4) if exp > 0 else None
+
+    # Vital integrity combines BP, HR, Temp, SpO2
+    vital_exp = sum(cats[k]["expected"] for k in ("blood_pressure", "heart_rate", "temperature", "spo2"))
+    vital_pres = sum(cats[k]["preserved"] for k in ("blood_pressure", "heart_rate", "temperature", "spo2"))
+
     fhir_status = "NOT_MEASURED"
-    if fhir_bundles > 0:
-        fhir_status = "PASS" if fhir_failures == 0 else "FAILED"
+    if drift["fhir_bundles_checked"] > 0:
+        fhir_status = "PASS" if drift["fhir_failures"] == 0 else "FAILED"
 
     return {
-        "expected_values": expected,
-        "preserved_values": preserved,
-        "modified_values": 0,
-        "missing_values": missing,
-        "lab_integrity": round(preserved / expected, 4) if expected > 0 else None,
-        "medication_integrity": round(preserved / expected, 4) if expected > 0 else None,
-        "dosage_integrity": round(preserved / expected, 4) if expected > 0 else None,
-        "vital_integrity": round(preserved / expected, 4) if expected > 0 else None,
+        "expected_values": ov["expected"],
+        "preserved_values": ov["preserved"],
+        "modified_values": ov["modified"],
+        "missing_values": ov["missing"],
+        "unexpected_values": ov["unexpected"],
+        "exact_fidelity_pct": ov["exact_fidelity_pct"],
+        "lab_integrity": _cat_ratio("laboratory_measurements"),
+        "medication_integrity": _cat_ratio("medication_names"),
+        "dosage_integrity": _cat_ratio("dosages"),
+        "vital_integrity": round(vital_pres / vital_exp, 4) if vital_exp > 0 else None,
         "fhir_integrity": fhir_status,
-        "fhir_bundles_checked": fhir_bundles,
-        "fhir_bundles_valid": fhir_valid,
+        "fhir_bundles_checked": drift["fhir_bundles_checked"],
+        "fhir_bundles_valid": drift["fhir_bundles_valid"],
+        "categories": cats,
+        "critical_failures": drift["critical_failures"],
     }
 
 
@@ -390,7 +389,7 @@ def execute_job_pipeline(
         files_quarantined = int(result.get("files_quarantined", 0))
         artifacts_complete = (job_output / "report.json").exists() and (job_output / "records.jsonl").exists()
 
-        if not artifacts_complete or canary_info["leaks"] > 0 or engine_gate == "BLOCKED" or critical_risk_count > 0 or clinical["fhir_integrity"] == "FAILED":
+        if not artifacts_complete or canary_info["leaks"] > 0 or engine_gate == "BLOCKED" or critical_risk_count > 0 or clinical["fhir_integrity"] == "FAILED" or clinical.get("modified_values", 0) > 0:
             final_status = "BLOCKED"
             release_decision = "BLOCKED"
         elif files_total > 0 and files_sanitized == 0 and files_quarantined > 0:
@@ -407,39 +406,76 @@ def execute_job_pipeline(
         assessment_id = f"pa-{secrets.token_hex(8)}"
         clinical_id = f"clin-{secrets.token_hex(8)}"
         identity_id = f"idc-{secrets.token_hex(8)}"
-        passport_id = f"psp-{secrets.token_hex(8)}"
 
-        # Compute deterministic manifest hash for Privacy Passport (UNSIGNED)
+        # Build Privacy Risk Map from actual engine risk_summary
+        risk_sum = engine_pi.get("risk_summary") or {}
+        pre_cats = risk_sum.get("pre_categories") or {}
+        low_cnt = int(post_cats.get("LOW", 0))
+        mod_cnt = int(post_cats.get("MODERATE", 0))
+        high_cnt = int(post_cats.get("HIGH", 0))
+        crit_cnt = int(post_cats.get("CRITICAL", 0))
+        total_assessed = low_cnt + mod_cnt + high_cnt + crit_cnt
+        risk_map = {
+            "low": low_cnt,
+            "moderate": mod_cnt,
+            "high": high_cnt,
+            "critical": crit_cnt,
+            "total_assessed": total_assessed,
+            "requiring_mitigation": int(risk_sum.get("records_below_min_group_pre", 0)),
+            "blocked_from_release": crit_cnt if release_decision == "BLOCKED" else 0,
+            "pre_categories": pre_cats,
+            "post_categories": post_cats,
+            "mitigation_actions": engine_pi.get("mitigation_actions") or {},
+            "safe_explanations": (engine_pi.get("release_gate") or {}).get("reason_codes") or [],
+            "release_decision": release_decision,
+        }
+
+        # Use live verifiable Privacy Passport emitted by starter/main.py when available
         report_hash = (
             compute_file_sha256(job_output / "report.json")
             if (job_output / "report.json").exists()
             else "N/A"
         )
-        passport_payload = {
-            "passport_id": passport_id,
-            "job_id": job_id,
-            "dataset_id": dataset_id,
-            "organisation_id": organisation_id,
-            "issued_at": now,
-            "signature_status": "UNSIGNED",
-            "release_decision": release_decision,
-            "report_sha256": report_hash,
-            "metrics": {
-                "files_total": files_total,
-                "files_sanitized": files_sanitized,
-                "files_quarantined": files_quarantined,
-                "records_processed": result["records_processed"],
-                "records_linked": result["records_linked"],
-                "pii_detected": pii_detected,
-                "canary_status": canary_info["status"],
-                "canary_leaks": canary_info["leaks"],
-                "clinical_expected": clinical["expected_values"],
-                "clinical_preserved": clinical["preserved_values"],
-            },
-        }
-        manifest_hash = hashlib.sha256(
-            json.dumps(passport_payload, sort_keys=True).encode("utf-8")
-        ).hexdigest()
+        engine_passport_path = job_output / "privacy_passport.json"
+        if engine_passport_path.is_file():
+            passport_payload = json.loads(engine_passport_path.read_text(encoding="utf-8"))
+            passport_id = str(
+                (passport_payload.get("certificate_identity") or {}).get("certificate_id")
+                or f"psp-{secrets.token_hex(8)}"
+            )
+            sig_status = str((passport_payload.get("signature") or {}).get("status") or "UNSIGNED")
+            manifest_hash = str(
+                (passport_payload.get("dataset_provenance") or {}).get("output_dataset_root_hash")
+                or hashlib.sha256(json.dumps(passport_payload, sort_keys=True).encode("utf-8")).hexdigest()
+            )
+        else:
+            passport_id = f"psp-{secrets.token_hex(8)}"
+            sig_status = "UNSIGNED"
+            passport_payload = {
+                "passport_id": passport_id,
+                "job_id": job_id,
+                "dataset_id": dataset_id,
+                "organisation_id": organisation_id,
+                "issued_at": now,
+                "signature_status": "UNSIGNED",
+                "release_decision": release_decision,
+                "report_sha256": report_hash,
+                "metrics": {
+                    "files_total": files_total,
+                    "files_sanitized": files_sanitized,
+                    "files_quarantined": files_quarantined,
+                    "records_processed": result["records_processed"],
+                    "records_linked": result["records_linked"],
+                    "pii_detected": pii_detected,
+                    "canary_status": canary_info["status"],
+                    "canary_leaks": canary_info["leaks"],
+                    "clinical_expected": clinical["expected_values"],
+                    "clinical_preserved": clinical["preserved_values"],
+                },
+            }
+            manifest_hash = hashlib.sha256(
+                json.dumps(passport_payload, sort_keys=True).encode("utf-8")
+            ).hexdigest()
 
         with get_db() as conn:
             conn.execute(
@@ -489,7 +525,7 @@ def execute_job_pipeline(
                     atk_run["risk_score"],
                     reid_risk_level,
                     1 if release_decision in ("APPROVED", "APPROVED_WITH_WARNINGS") else 0,
-                    json.dumps({"files_report_count": len(result.get("files_report", []))}),
+                    json.dumps({"files_report_count": len(result.get("files_report", [])), "risk_map": risk_map}),
                     now,
                 ),
             )
@@ -560,7 +596,7 @@ def execute_job_pipeline(
                 INSERT OR REPLACE INTO passports (
                     id, job_id, dataset_id, organisation_id, manifest_hash,
                     signature_status, passport_json, created_by, created_at
-                ) VALUES (?, ?, ?, ?, ?, 'UNSIGNED', ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     passport_id,
@@ -568,6 +604,7 @@ def execute_job_pipeline(
                     dataset_id,
                     organisation_id,
                     manifest_hash,
+                    sig_status,
                     json.dumps(passport_payload),
                     actor_id,
                     now,

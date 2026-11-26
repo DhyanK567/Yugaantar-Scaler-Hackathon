@@ -1,81 +1,75 @@
-# Milestone 15.5 — GuptKavach Privacy Passport Baseline Audit
-
-**Date:** 2026-11-26  
-**Branch:** `mailestone-15.5`  
-**Audit Scope:** `starter/`, `tests/`, `validate_output.py`, `check_submission.py`, `check_dev.py`
-
----
-
-## 1. Existing Pipeline & Release Decision Point
-
-The core offline sanitisation pipeline lives in [`starter/main.py`](../starter/main.py):
-
-1. **Pass 1 (Ingestion & Clue Extraction):**
-   - Recursively walks `--input` using `verify_path_containment()` (`starter/raksha_engine/secure_fs.py`) to reject symlinks and path escapes.
-   - Parses `.csv`, `.tsv`, `.json`, and `.txt` files; unsupported/empty/undecodable/malformed files are marked `status = "quarantined"` with a reason code.
-   - Extracts `RecordClues` (`linking.py`) and corpus names (`names.py`), then clusters identities via `resolve_identities()`.
-   - Computes pre-mitigation attack simulation (`attacker.py`: `simulate_attacks()`) and combination-based risk (`risk_engine.py`: `evaluate_corpus_risk()`).
-
-2. **Pass 2 (Sanitisation & Export):**
-   - Sanitises filenames (`sanitize_filename()`), CSV/TSV cells (`sanitize_structured_cell()`), JSON nodes (`sanitize_json_node()`), and free text (`sanitize_free_text()`).
-   - Writes sanitised outputs to `<output>/sanitized/` and linkage records to `<output>/records.jsonl`.
-   - Validates exported FHIR R4 Bundles via `validate_fhir_r4_bundle()` (`clinical_validator.py`).
-   - Computes post-mitigation attack simulation (`post_attack`) and risk (`post_risk`).
-
-3. **Release Decision Point (`starter/main.py` lines 656–657):**
-   - Calls `evaluate_release_gate()` (`starter/raksha_engine/privacy_utility.py`) using `PrivacyMetrics`, `ClinicalUtilityMetrics`, `post_risk`, `pre_attack`, `post_attack`, and `POLICY` (`starter/config/policy.yaml`).
-   - Outputs `<output>/report.json` (`schema: "raksha-report/1"`).
+# MEDILOCKER — MILESTONE 15.5 BASELINE AUDIT
+**Phase 0 Repository & Evidence Audit**  
+**Date:** 2026-11-27  
+**Auditor:** Principal Privacy Engineer & Healthcare Security Architect
 
 ---
 
-## 2. Verification of Existing Modules & Gaps
+## 1. Executive Summary
 
-| Area | What Exists in Code | Gaps / Findings |
-| --- | --- | --- |
-| **Cryptographic Engine (`crypto.py`)** | `GuptKavachKeyRing` with `scrypt` / `PBKDF2-HMAC-SHA256` KDF, domain-separated subkeys (`pseudonym`, `date_shift`, `encryption`, `integrity`, `quarantine`), AES-256-GCM / ChaCha20-Poly1305 / HMAC-CTR fallback. | `main.py` instantiates `keyring = GuptKavachKeyRing(SECRET)` when `RAKSHA_SECRET` is set, but `privacy.py` still uses raw `SECRET` directly. No asymmetric signing (Ed25519) or certificate manifest hashing exists yet. |
-| **Quarantine (`quarantine.py`)** | `QuarantineVault` implements AES-256-GCM encrypted vaulting + `quarantine_manifest.jsonl`. | Imported in `starter/main.py` (line 52), **but never called** in `main()`. Quarantined files are simply omitted from `sanitized/` and recorded in `report.json`. |
-| **Secure FS (`secure_fs.py`)** | `verify_path_containment()`, `secure_temporary_directory()`, `EncryptedFileVault`. | `verify_path_containment()` is used on input files in `main.py`. |
-| **Privacy & Attack Metrics (`attacker.py`, `risk_engine.py`, `privacy_utility.py`)** | `simulate_attacks()` (7 strategies), `evaluate_corpus_risk()`, `evaluate_release_gate()`. | Available at runtime in `main.py`. `ClinicalUtilityMetrics.clinical_values_preserved` and `clinical_values_total` are passed as `None` in `main.py` (not measured inline during pipeline run). |
-| **Clinical & FHIR (`clinical_validator.py`)** | `validate_fhir_r4_bundle()` is called in `main.py` (19 bundles, 332 resources on `dev/input`). `validate_clinical_probes()` exists in `clinical_validator.py`. | `fhir_failures` is recorded in `report.json`, but **not** fed into `evaluate_release_gate()`. Ground-truth clinical preservation (`4847/4855`) is only measured externally by `check_dev.py` because `main.py` has no `truth.json`. |
-| **Identity Metrics** | `records_processed` and `records_linked` are counted in `main.py`. | Precision, recall, F0.5, and false merges require ground truth (`truth.json`), so they are `NOT_MEASURED` during blind pipeline execution unless evaluated against truth. |
-| **CLI & Contract (`validate_output.py`, `check_submission.py`)** | `python main.py --input {input} --output {output}` via `starter/raksha.toml`. | `validate_output.py` requires `sanitized/`, `report.json`, and `records.jsonl`. `check_submission.py --run` checks determinism (`sanitized/`, `records.jsonl`), secret-keyed output, and zero `RAKSHA_SECRET` leakage. |
+This baseline audit evaluates the current MediLocker / GuptKavach repository (`61c237f`) prior to Milestone 15.5 hardening. The system combines:
+- An offline, CPU-only Python privacy engine (`starter/main.py` + `starter/raksha_engine/*`).
+- A FastAPI backend (`backend/main.py`, `backend/pipeline.py`, `backend/database.py`, `backend/engine_adapter.py`, `backend/auth.py`, `backend/audit.py`).
+- A Next.js 16 monochrome dashboard (`frontend/src/app/dashboard/*`, `frontend/src/lib/api.ts`).
+
+While the core anonymization engine performs strongly on the practice benchmark (**0/3,230 PII leaks**, **0/4 canaries leaked**, **4,847/4,855 medical values preserved = 99.84%**), this audit identifies concrete cryptographic, clinical-fidelity, passport-wiring, and risk-map gaps that must be closed with verifiable, non-fabricated implementations.
 
 ---
 
-## 3. Baseline Measurements (`dev/input`)
+## 2. Existing Implementation & Confirmed Strengths
 
-Executed `RAKSHA_SECRET=test-secret-baseline python3 starter/main.py --input dev/input --output /tmp/gk_baseline_out`:
-
-- **Pipeline output:** `files 200 sanitized 195 quarantined 5 records 823` (`1.57s`, `43.61 MB` peak RSS).
-- **`validate_output.py`:** `CONTRACT OK`.
-- **`check_dev.py`:**
-  - Personal data leaked: `0 / 3230` (`0.0%`).
-  - Canaries found: `0 / 4`.
-  - Medical data kept: `4847 / 4855` (`99.8%`).
-  - Patient linking: `precision 1.00, recall 0.81, F0.5 0.95` (`0` false merges).
-  - Raw copies of broken/unsupported files: `0`.
-- **Existing unit tests (`tests/cryptography`, `tests/clinical_integrity`, `tests/privacy_attacks`, `tests/multilingual/test_unit.py`):** `39 / 39` passed in `1.344s`.
-- **`check_submission.py --repo starter --run`:** Static checks passed; `--run` failed because `python` binary is not in `PATH` on this host (`python3` is available).
+1. **Core Privacy Engine (`starter/main.py`, `starter/raksha_engine/`)**:
+   - Two-pass deterministic pipeline (Pass 1: ingestion, clue extraction, conservative cross-file identity clustering; Pass 2: multilingual PII redaction, HMAC pseudonymisation, keyed date shifting, age/PIN generalisation, k-anonymity suppression, FHIR R4 structural validation, and Privacy Passport emission).
+   - Existing test suites pass:
+     - `tests/cryptography/test_crypto_security.py`: **13/13 PASSED**
+     - `tests/privacy_passport/test_privacy_passport.py`: **19/19 PASSED**
+     - `tests/privacy_attacks/test_privacy_attacks.py`: **10/10 PASSED**
+     - `tests/clinical_integrity/test_clinical_integrity.py`: **9/9 PASSED**
+     - `tests/integration/test_full_pipeline_integration.py`: **3/3 PASSED**
+     - `tests/integration/test_dataset_workflow_e2e.py`: **4/4 PASSED**
+     - `tests/multilingual/test_multilingual_pii.py`: **18/18 cases PASSED** (`P=1.000, R=1.000, F1=1.000`)
+2. **Offline / CPU-Only Compliance**: Zero LLMs, zero generative AI, zero runtime network calls in `starter/main.py`.
+3. **UI & Backend Structure**: Monochrome MediLocker UI with `PageHeader`, `StatePanels`, `NOT_RUN`/`NOT_MEASURED` badges, SQLite persistence, and immutable audit logging.
 
 ---
 
-## 4. Architecture Decisions & Risks for Milestone 15.5
+## 3. Identified Vulnerabilities & Missing Capabilities
 
-1. **Non-disruptive Evidence Layer:**
-   - Keep `sanitized/`, `records.jsonl`, and `report.json` (`raksha-report/1`) intact so `validate_output.py` and `check_submission.py` continue to pass.
-   - Add `dataset_manifest.json`, `privacy_passport.json`, and `privacy_passport.html` to `--output`.
-   - Note: `check_submission.py` scans ALL files in `out.rglob("*")` for `RAKSHA_SECRET` bytes — never write `RAKSHA_SECRET` or private keys into any output file.
-   - Note: `check_submission.py` checks `tree_digest()` on `sanitized/` and `records.jsonl` only (not `privacy_passport.json`), so timestamps/signatures in `privacy_passport.json` will not break `check_submission.py`, and we will still make the passport payload deterministic (with optional deterministic or explicit timestamp handling).
+### 3.1 Cryptographic Assurance Gaps (Phase 1)
+- **Direct Secret Reuse Without HKDF-SHA256 Domain Separation**: `starter/raksha_engine/privacy.py` passes raw `secret` bytes directly into `hmac.new(secret, patient_key, hashlib.sha256)` for pseudonyms and `hmac.new(secret, b"shift|" + patient_key, hashlib.sha256)` for date shifting. While HMAC-SHA256 is already resistant to length-extension attacks, there is no standard RFC 5869 **HKDF-SHA256** key schedule separating:
+  - Patient pseudonyms
+  - Identity-linking tokens
+  - Manifest integrity
+  - Passport authentication / signatures
+- **Missing Secret Validation**: `starter/main.py` reads `os.environ.get("RAKSHA_SECRET", "").encode("utf-8")` without rejecting empty/missing secrets or validating minimum strength in strict mode.
 
-2. **Honest `NOT_MEASURED` / `NOT_RUN` Reporting:**
-   - During blind sanitisation (`main.py`), ground-truth metrics (canary check against `truth.json`, clinical probe recall vs `truth.json`, identity precision/recall/F0.5) are not available without ground truth. They **must** be recorded as `"NOT_MEASURED"` / `"NOT_RUN"` rather than `0` or `100%`.
-   - Metrics that *are* measured inline (attack simulation pre/post, combination risk categories, FHIR R4 bundle/resource validation, direct identifiers detected, file counts, security checks) will be populated from actual pipeline results.
+### 3.2 Clinical Fidelity & Drift Engine Gaps (Phase 2)
+- **Single-Regex Clinical Evaluation in Backend**: `backend/pipeline.py:_evaluate_clinical_integrity()` uses only one regex (`CLINICAL_VALUE_RE`) and hardcodes `modified_values: 0`, then copies the identical `preserved / expected` ratio into `lab_integrity`, `medication_integrity`, `dosage_integrity`, and `vital_integrity`.
+- **No Drift / Magnitude Change Detection**: A dosage mutation (e.g., `5 mg` -> `50 mg`) or unit swap is not categorized per clinical domain (medications, dosages, units, frequencies, routes, durations, BP, HR, Temp, SpO2, Hb, glucose, labs, diagnoses, FHIR codes/refs).
 
-3. **Cryptographic Integrity & Signing:**
-   - `cryptography` (`46.0.5`) is available in the Python environment, providing Ed25519 (`cryptography.hazmat.primitives.asymmetric.ed25519`).
-   - Signing keys must be kept completely separate from `RAKSHA_SECRET` (never derived from `RAKSHA_SECRET` or hardcoded).
-   - Support Ed25519 signing via an explicit signing key path (`--signing-key` / `GUPTKAVACH_SIGNING_KEY_PATH` / PEM env) and an explicit `UNSIGNED` integrity-only mode when no signing key is configured.
+### 3.3 Multilingual Contextual PII Intelligence Gaps (Phase 3)
+- Needs a dedicated contextual known-good clinical vocabulary & conflict-resolution test suite (`tests/multilingual_intelligence/`) verifying per-language Precision, Recall, F1, and clinical-term false-positive rate (ensuring `Asha Rajput` is redacted while `ASHA worker`, `Dr. Ramesh`, `C/O fever`, `Parkinson's disease`, and `Dolo 650 mg` are preserved without blanket dictionary exemptions).
 
-4. **Risks:**
-   - **PII leakage into certificate/manifest:** Original input filenames can contain patient names (e.g. `Discharge_Summary_Fatima_Bano_SNJ-26-064508.txt`). The passport and `dataset_manifest.json` must only reference **sanitised** output relative paths and SHA-256 digests, never raw input filenames.
-   - **Offline HTML rendering:** `privacy_passport.html` must be 100% self-contained (inline CSS, zero external CDNs or fonts).
+### 3.4 Privacy Passport Disconnection in Backend (Phase 4)
+- `starter/main.py` generates a full `privacy_passport.json` + `dataset_manifest.json` via `starter/raksha_engine/passport.py`, and `starter/verify_passport.py` verifies every file hash in `sanitized/` + manifest root hash + Ed25519 signature.
+- However, `backend/pipeline.py` ignores `privacy_passport.json` and constructs a minimal custom payload hashing only `report.json`, and `backend/main.py` verification only checks `report.json` rather than recomputing the full `sanitized/` manifest and detecting altered output files.
+
+### 3.5 Privacy Risk Map Gaps (Phase 5)
+- `starter/main.py` computes `LOW`, `MODERATE`, `HIGH`, `CRITICAL` risk counts (`pre_categories` / `post_categories`) and `AttackSimulationSummary` in `report.json`, but `backend/pipeline.py` and `frontend/src/app/dashboard/privacy-intelligence/page.tsx` do not surface the dataset risk map (`LOW`/`MODERATE`/`HIGH`/`CRITICAL`, records requiring mitigation, blocked records, safe explanations, pre- vs post-mitigation risk).
+
+### 3.6 Security Regression Gate & Independent Evaluation (Phases 6 & 7)
+- No unified offline security regression gate script (`scripts/security_regression_gate.py`) fails the release gate on canary leaks, raw PII leaks, or clinical corruption.
+- No independent held-out multi-hospital synthetic benchmark (`tests/independent_eval/`) separated from tuning data.
+
+---
+
+## 4. Proposed Milestone 15.5 Implementation Plan
+
+1. **Phase 1**: Implement RFC 5869 **HKDF-SHA256** (`hkdf_extract`, `hkdf_expand`, `hkdf_sha256`) in `starter/raksha_engine/crypto.py` with explicit domain separation for pseudonyms, identity-linking tokens, manifest integrity, and passport authentication, plus secret validation and unit tests. Wire `privacy.py` to use HKDF-derived purpose keys deterministically.
+2. **Phase 2**: Implement `ClinicalDriftAnalyzer` in `starter/raksha_engine/clinical_validator.py` tracking 14 clinical categories with exact `expected`, `preserved`, `missing`, `modified`, `unexpected`, and `preservation_pct` without storing raw patient text. Wire into `backend/pipeline.py` and add `tests/clinical_drift/`.
+3. **Phase 3**: Harden contextual clinical vocabulary & conflict resolution in `starter/raksha_engine/evidence.py` and `names.py`, and create `tests/multilingual_intelligence/` measuring per-language P/R/F1 and clinical-term FPR.
+4. **Phase 4**: Connect `backend/pipeline.py` and `backend/main.py` to `starter/raksha_engine/passport.py` and `starter/verify_passport.py` (`verify_passport_bundle`), detecting altered output files and tampered passports. Add `tests/privacy_passport_verification/`.
+5. **Phase 5**: Surface the Privacy Risk Map (`LOW`/`MODERATE`/`HIGH`/`CRITICAL`, safe explanations, pre/post mitigation) in `backend/pipeline.py`, `backend/main.py`, and `frontend/src/app/dashboard/privacy-intelligence/page.tsx`.
+6. **Phase 6**: Create `scripts/security_regression_gate.py` running all security, clinical, identity, multilingual, canary, attack, determinism, and cryptographic checks offline.
+7. **Phase 7**: Create `tests/independent_eval/` with a fresh multi-hospital multilingual synthetic benchmark and record exact metrics.
+8. **Phase 8**: Update `frontend/` dashboards (`privacy-intelligence`, `clinical-integrity`, `privacy-passports`), build frontend (`pnpm run build`), run all tests + `validate_output.py` + `check_dev.py` + `check_submission.py`, and author all required Milestone 15.5 docs.
