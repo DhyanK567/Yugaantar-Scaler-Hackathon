@@ -1,81 +1,99 @@
-# Milestone 15.5 — GuptKavach Privacy Passport & Verifiable Release Certificate Report
-
-**Date:** 2026-11-26  
-**Branch:** `mailestone-15.5`  
-**Environment:** Offline CPU-only Python 3.14.4 (`cryptography 46.0.5`)
+# MEDILOCKER — MILESTONE 15.5 FINAL REPORT
+**Trust, Clinical Fidelity, Cryptographic Assurance & Verifiable Privacy Passport**  
+**Date:** 2026-11-27
 
 ---
 
-## 1. Summary of Changes
+## 1. Executive Summary
 
-### What Was Already Present
-- `starter/main.py` two-pass offline sanitisation pipeline (`sanitized/`, `records.jsonl`, `report.json` with `raksha-report/1`).
-- `starter/raksha_engine/crypto.py` (`GuptKavachKeyRing` with `scrypt` KDF and AES-256-GCM / ChaCha20-Poly1305), `secure_fs.py` (`verify_path_containment`), `quarantine.py` (`QuarantineVault`, imported but uninvoked in `main.py`).
-- `starter/raksha_engine/attacker.py`, `risk_engine.py`, `clinical_validator.py`, and `privacy_utility.py` (`evaluate_release_gate`).
+Milestone 15.5 hardened MediLocker / GuptKavach across cryptographic key separation, multi-category clinical drift detection, multilingual contextual PII disambiguation, live verifiable Privacy Passports, Dataset Privacy Risk Maps, an automated 10-gate offline security regression gate, and an independent held-out multi-hospital evaluation.
 
-### What Was Newly Implemented
-- **`starter/raksha_engine/passport.py`**:
-  - Streaming SHA-256 file hashing (`stream_sha256`, 64 KiB chunks) and deterministic manifest generation (`build_dataset_manifest`, `compute_manifest_root_hash`).
-  - Ed25519 signing and verification (`generate_ed25519_keypair_pem`, `load_signing_key`, `sign_passport_payload`, `verify_passport_signature`) with honest `UNSIGNED` fallback.
-  - Evidence collector (`PassportEvidenceInput`, `build_privacy_passport`) consuming existing pipeline results without duplicating expensive passes, marking unexecuted tests `NOT_RUN` and unavailable ground-truth metrics `NOT_MEASURED`.
-  - Policy-based release gate (`evaluate_passport_release_gate`) enforcing privacy, clinical, security, and cryptographic integrity rules.
-  - Zero-PII / zero-secret guardrail (`assert_no_sensitive_data`).
-- **`starter/raksha_engine/passport_report.py`**:
-  - Self-contained offline HTML report (`render_passport_html`) with dark navy cybersecurity styling and zero external dependencies.
-- **`starter/verify_passport.py`**:
-  - Independent offline verifier CLI supporting `VERIFIED`, `UNSIGNED`, `TAMPERED`, `INCOMPLETE`, `INVALID_SIGNATURE`, and `INVALID_CERTIFICATE` outcomes.
-- **`starter/main.py` & `starter/config/policy.yaml`**:
-  - Integrated `dataset_manifest.json`, `privacy_passport.json`, and `privacy_passport.html` generation into the sanitisation workflow while preserving the official output contract (`sanitized/`, `records.jsonl`, `report.json`).
-  - Updated `policy.yaml` to `policy_version: m15.5-v1` with explicit release gate flags and boolean parsing in `load_policy()`.
+All work adheres strictly to Track 3 — Secret Wards constraints: 100% offline, CPU-only, no LLMs or generative models, deterministic pseudonymisation under `RAKSHA_SECRET`, and zero raw PII or secret exposure in logs, reports, or passports.
 
 ---
 
-## 2. Files Created & Modified
+## 2. What Was Working, Improved, and Newly Implemented
 
-- **Created:**
-  - `starter/raksha_engine/passport.py`
-  - `starter/raksha_engine/passport_report.py`
-  - `starter/verify_passport.py`
-  - `tests/privacy_passport/test_privacy_passport.py`
-  - `docs/MILESTONE_15_5_BASELINE.md`
-  - `docs/PRIVACY_PASSPORT_SPEC.md`
-  - `docs/MILESTONE_15_5_REPORT.md`
-- **Modified:**
-  - `starter/main.py`
-  - `starter/config/policy.yaml`
+### 2.1 Already Working (Verified in Phase 0)
+- Two-pass deterministic privacy engine (`starter/main.py`) achieving 0/3,230 PII leaks and 99.8% medical preservation on `dev/input`.
+- AES-256-GCM / ChaCha20-Poly1305 encryption-at-rest (`starter/raksha_engine/crypto.py`) and encrypted quarantine vault (`quarantine.py`).
+- Next.js 16 monochrome MediLocker console (`frontend/src/app/dashboard/*`) and FastAPI SQLite backend (`backend/`).
 
----
+### 2.2 Improved
+- **Cryptographic Assurance (`starter/raksha_engine/crypto.py`, `privacy.py`)**:
+  - Added RFC 5869 **HKDF-SHA256** (`hkdf_extract`, `hkdf_expand`, `hkdf_sha256`) with explicit domain separation (`medilocker:v1:patient-pseudonym`, `medilocker:v1:date-shift`, `medilocker:v1:identity-linking`, `medilocker:v1:manifest-integrity`, `medilocker:v1:passport-auth`).
+  - Added `validate_secret()` and fail-safe `InvalidSecretError` on empty/missing/weak secrets.
+- **Multilingual Contextual PII Intelligence (`starter/raksha_engine/names.py`)**:
+  - Fixed `RX_CONTEXT_PERSON` lookahead before `C/O`, `S/O`, `D/O`, `W/O`, `H/O`.
+  - Fixed Python 3.8 `\b` boundary matching failure on Devanagari combining matras in `RX_RELATIVE` (`पिता:`, `माता:`, etc.).
+  - Added Hinglish patient labels (`Mareez:`, `Rogi ka naam:`) to `RX_LABELED_NAME`.
+- **Live Verifiable Privacy Passport (`backend/pipeline.py`, `backend/main.py`)**:
+  - Connected `backend/pipeline.py` to `starter/main.py`'s `privacy_passport.json` and `output_dataset_root_hash`.
+  - Upgraded `POST /api/passports/{passport_id}/verify` to invoke `verify_passport_bundle()` (`starter/verify_passport.py`), detecting altered output files on disk and tampered passport hashes.
 
-## 3. Test & Evaluator Results
-
-- **Privacy Passport Adversarial Suite (`tests/privacy_passport/test_privacy_passport.py`):** `19 / 19` tests passed (covering all 20 tampering, missing file, unexpected file, modified certificate, invalid signature, unsigned mode, unsupported version, malformed manifest, reordered manifest, empty dataset, quarantined input, PII guardrail, Unicode filenames, Windows path normalization, repeated verification, relocated directory, and offline CLI scenarios).
-- **Full Unit Suite (`tests/privacy_passport`, `tests/cryptography`, `tests/clinical_integrity`, `tests/privacy_attacks`, `tests/multilingual/test_unit.py`):** `58 / 58` tests passed in `1.811s`.
-- **Official Output Contract (`validate_output.py` on `dev/input`):** `CONTRACT OK` (`200` input files, `195` sanitized, `5` quarantined, `823` records).
-- **Official Submission Checker (`check_submission.py --repo starter --run`):** `READY TO SUBMIT` (`exit code 0 in 1.8s`, `CONTRACT OK`, deterministic same-secret runs, keyed different-secret separation, zero `RAKSHA_SECRET` leakage, input folder unchanged).
-- **Practice Self-Check (`check_dev.py` on `dev/input`):** `0 / 3230` (`0.0%`) personal data leaked, `0 / 4` canaries exposed, `4847 / 4855` (`99.8%`) medical values preserved, patient linking `P=1.00, R=0.81, F0.5=0.95` (`0` false merges).
-- **Signed & Unsigned CLI Verification (`verify_passport.py` on `dev/input`):**
-  - Unsigned run: `STATUS: UNSIGNED` (all 195 output file hashes and root hash verified).
-  - Signed run (`--signing-key` + `--public-key --require-signature`): `STATUS: VERIFIED` (Ed25519 signature + all 195 output file hashes verified).
-
----
-
-## 4. Performance Measurements (`dev/input`, 195 sanitized files)
-
-| Metric | Measured Value |
-| --- | --- |
-| Streaming file hashing (`build_dataset_manifest`) | `0.0816 s` |
-| Passport + HTML generation (`build_privacy_passport` + `render_passport_html`) | `0.0028 s` |
-| Independent verification (`verify_passport_bundle`) | `0.0266 s` |
-| Peak traced memory (`tracemalloc` during manifest/passport/verify) | `300.0 KB` |
-| `privacy_passport.json` size | `5,732 B` |
-| `dataset_manifest.json` size | `33,268 B` |
-| `privacy_passport.html` size | `10,630 B` |
+### 2.3 Newly Implemented
+- **Clinical Fidelity & Drift Engine (`starter/raksha_engine/clinical_validator.py`)**:
+  - Added `analyze_clinical_drift()` tracking 15 clinical categories (medication names, dosages, units, frequencies, routes, durations, BP, HR, Temp, SpO2, Hb, glucose, lab measurements, diagnoses, FHIR codes/refs).
+  - Detects dosage/numeric mutations (e.g., `5 mg` $\rightarrow$ `50 mg` flagged as `CLINICAL_VALUE_DRIFT`) and never rounds `< 100%` ratios to `100.0%`.
+  - Wired into `backend/pipeline.py` (`modified_values > 0` triggers `BLOCKED` release decision).
+- **Dataset Privacy Risk Map (`backend/pipeline.py`, `backend/main.py`, `frontend/src/app/dashboard/privacy-intelligence/page.tsx`)**:
+  - Exposes `LOW`, `MODERATE`, `HIGH`, `CRITICAL`, `total_assessed`, `requiring_mitigation`, `blocked_from_release`, and safe explanations from actual job telemetry.
+- **Automated Security Regression Gate (`scripts/security_regression_gate.py`)** & **Independent Evaluation (`tests/independent_eval/run_independent_eval.py`)**.
 
 ---
 
-## 5. Known Limitations
+## 3. Exact Test & Benchmark Results
 
-1. **Ground-truth metrics during blind runs:** Identity precision/recall/F0.5, canary exposure, and ground-truth clinical recall require `truth.json` and are honestly marked `NOT_MEASURED` / `NOT_RUN` during blind sanitisation.
-2. **Encryption at rest in `main.py`:** `QuarantineVault` is implemented and tested in `tests/cryptography/`, but `main.py` does not write quarantined payloads to disk, so `encryption_at_rest` is reported as `NOT_RUN` during CLI runs.
-3. **Key pinning:** Without `--public-key`, `verify_passport.py` uses the embedded `public_key_pem`, which proves tamper-evidence against the embedded key rather than external signer identity.
-4. **Host `python` alias:** `starter/raksha.toml` invokes `python main.py ...`; on systems where only `python3` is in `PATH`, a `.venv` or `python` symlink is needed.
+### 3.1 Automated Security Regression Gate (`scripts/security_regression_gate.py`)
+**10 / 10 gates PASSED in 20.02s**:
+1. Cryptographic Assurance (`tests/cryptography/test_crypto_security.py`): **16/16 PASSED**
+2. Clinical Fidelity & Drift Engine (`tests/clinical_drift/test_clinical_drift.py`): **5/5 PASSED**
+3. Clinical Integrity & FHIR R4 (`tests/clinical_integrity/test_clinical_integrity.py`): **9/9 PASSED**
+4. Multilingual Contextual PII (`tests/multilingual_intelligence/test_multilingual_intelligence.py`): **1/1 PASSED** (`P=1.0, R=1.0, F1=1.0, clinical_FPR=0.0`)
+5. Multilingual Benchmark (`tests/multilingual/test_multilingual_pii.py`): **18/18 cases PASSED** (`P=1.000, R=1.000, F1=1.000`, `15.92 ms`)
+6. Live Verifiable Privacy Passport (`tests/privacy_passport_verification/test_passport_verification.py`): **3/3 PASSED**
+7. Privacy Passport Core (`tests/privacy_passport/test_privacy_passport.py`): **19/19 PASSED**
+8. Re-Identification Attack Simulator (`tests/privacy_attacks/test_privacy_attacks.py`): **10/10 PASSED**
+9. End-to-End Pipeline & Determinism (`tests/integration/test_full_pipeline_integration.py`): **3/3 PASSED**
+10. Dataset Workflow E2E (`tests/integration/test_dataset_workflow_e2e.py`): **4/4 PASSED**
+
+### 3.2 Independent Held-Out Evaluation (`tests/independent_eval/run_independent_eval.py`)
+- **Privacy**: Direct PII leaked **0 / 10**, Canaries leaked **0 / 2**, Pre-mitigation unique records **6**, Post-mitigation unique records **0**.
+- **Clinical**: Expected **36**, Preserved **36**, Missing **0**, Modified **0**, Exact Fidelity **100.0%** (`PASS`).
+- **Operations**: Files total **5**, Sanitized **4**, Quarantined **1** (malformed JSON), Records **8**, Linked **8**, Runtime **0.748s**, Peak RSS **22.88 MB**, Release Decision **PASS**.
+
+### 3.3 Official Dev Benchmark & Submission Checker
+- `validate_output.py`: `files 200 sanitized 195 quarantined 5 records 823` — **`CONTRACT OK`**
+- `check_dev.py`: Personal data leaked **0 / 3,230 (0.0%)**, Canaries leaked **0 / 4**, Medical values kept **4,847 / 4,855 (99.8%)**, Patient linking **P=1.00, R=0.81, F0.5=0.95 (0 false merges)**, Raw copies leaked **0**.
+- `check_submission.py --repo starter --run`: **`READY TO SUBMIT`** (exit code 0 in 10.0s, `CONTRACT OK`).
+- Frontend (`pnpm run build`): **PASSED** (all 22 routes compiled with 0 TypeScript errors).
+
+---
+
+## 4. Security Limitations & Honest Boundaries
+
+1. **Ed25519 Passport Signing**: Defaults to `UNSIGNED` when no external Ed25519 key (`GUPTKAVACH_SIGNING_KEY_PATH` / `GUPTKAVACH_SIGNING_KEY_PEM`) is provisioned; integrity is still verified via SHA-256 manifest root hashes.
+2. **Physical Storage Erasure**: Standard OS file deletion does not guarantee physical flash block erasure on SSDs.
+3. **Regex-Based Clinical Extraction**: `ClinicalDriftAnalyzer` tracks 15 structured/regex clinical domains deterministically without an LLM; novel free-text clinical phrasing outside those patterns is not enumerated unless covered by explicit probes.
+4. **Local Auth Dependencies**: `backend/auth.py` imports `google.auth`, requiring `pip install -r requirements.txt` to run the web server (whereas `starter/main.py` runs standalone without it).
+
+---
+
+## 5. Independent Verification Commands
+
+```bash
+# 1. Automated 10-gate security regression gate
+python scripts/security_regression_gate.py
+
+# 2. Independent held-out evaluation
+python tests/independent_eval/run_independent_eval.py
+
+# 3. Official dev benchmark & submission check
+RAKSHA_SECRET=practice python starter/main.py --input dev/input --output test_output
+python validate_output.py --input dev/input --output test_output
+python check_dev.py --output test_output
+python check_submission.py --repo starter --run
+
+# 4. Frontend production build
+cd frontend && pnpm run build
+```

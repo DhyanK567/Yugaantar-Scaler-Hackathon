@@ -8,20 +8,56 @@ import hashlib
 import hmac
 import re
 
+from .crypto import (
+    HKDF_DOMAIN_DATE_SHIFT,
+    HKDF_DOMAIN_IDENTITY_LINK,
+    HKDF_DOMAIN_MANIFEST,
+    HKDF_DOMAIN_PASSPORT_AUTH,
+    HKDF_DOMAIN_PSEUDONYM,
+    InvalidSecretError,
+    hkdf_sha256,
+)
+
 _ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"  # Crockford base32
 
 
+def _require_secret(secret: bytes) -> bytes:
+    if not secret:
+        raise InvalidSecretError("RAKSHA_SECRET must be non-empty for cryptographic operations.")
+    return secret
+
+
 def pseudonym(patient_key: str, secret: bytes) -> str:
-    """Stable, non-reversible ID: HMAC-SHA256 keyed with RAKSHA_SECRET."""
-    digest = hmac.new(secret, patient_key.encode("utf-8"), hashlib.sha256).digest()
+    """Stable, non-reversible ID: HMAC-SHA256 keyed with HKDF-derived pseudonym subkey."""
+    subkey = hkdf_sha256(_require_secret(secret), info=HKDF_DOMAIN_PSEUDONYM)
+    digest = hmac.new(subkey, patient_key.encode("utf-8"), hashlib.sha256).digest()
     n = int.from_bytes(digest[:5], "big")
     code = "".join(_ALPHABET[(n >> (5 * i)) & 31] for i in range(6))
     return f"PSN-{code}"
 
 
+def identity_linking_token(clue: str, secret: bytes) -> str:
+    """Deterministic cross-record linking token using an independent HKDF domain subkey."""
+    subkey = hkdf_sha256(_require_secret(secret), info=HKDF_DOMAIN_IDENTITY_LINK)
+    return hmac.new(subkey, clue.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def manifest_hmac(manifest_root_hash: str, secret: bytes) -> str:
+    """Deterministic manifest authentication tag using an independent HKDF domain subkey."""
+    subkey = hkdf_sha256(_require_secret(secret), info=HKDF_DOMAIN_MANIFEST)
+    return hmac.new(subkey, manifest_root_hash.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def passport_auth_hmac(canonical_passport_bytes: bytes, secret: bytes) -> str:
+    """Deterministic passport HMAC tag using an independent HKDF domain subkey."""
+    subkey = hkdf_sha256(_require_secret(secret), info=HKDF_DOMAIN_PASSPORT_AUTH)
+    return hmac.new(subkey, canonical_passport_bytes, hashlib.sha256).hexdigest()
+
+
 def date_shift_days(patient_key: str, secret: bytes, max_days: int = 180) -> int:
     """Per-patient deterministic shift in [-max_days, +max_days], never 0."""
-    d = hmac.new(secret, b"shift|" + patient_key.encode("utf-8"), hashlib.sha256).digest()
+    subkey = hkdf_sha256(_require_secret(secret), info=HKDF_DOMAIN_DATE_SHIFT)
+    d = hmac.new(subkey, b"shift|" + patient_key.encode("utf-8"), hashlib.sha256).digest()
     v = int.from_bytes(d[:4], "big") % (2 * max_days) - max_days
     return v if v != 0 else 1
 

@@ -212,6 +212,21 @@ export interface PrivacyAssessment {
   created_at: number;
 }
 
+export interface PrivacyRiskMap {
+  low: number;
+  moderate: number;
+  high: number;
+  critical: number;
+  total_assessed: number;
+  requiring_mitigation: number;
+  blocked_from_release: number;
+  pre_categories?: Record<string, number>;
+  post_categories?: Record<string, number>;
+  mitigation_actions?: Record<string, number>;
+  safe_explanations?: string[];
+  release_decision?: string;
+}
+
 export interface PrivacyIntelligence {
   status: "MEASURED" | "NOT_MEASURED";
   assessments_count: number;
@@ -219,6 +234,7 @@ export interface PrivacyIntelligence {
   total_residual_leakage: number;
   canary_status: string;
   reid_risk_level: string;
+  risk_map?: PrivacyRiskMap | null;
   assessments: PrivacyAssessment[];
 }
 
