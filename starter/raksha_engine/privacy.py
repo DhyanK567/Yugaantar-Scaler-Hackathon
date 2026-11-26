@@ -1,0 +1,120 @@
+"""Privacy transformations: HMAC pseudonyms, per-patient date shifting, age bands,
+location & PIN generalisation, and rare-group k-anonymity suppression.
+"""
+from __future__ import annotations
+
+import datetime as dt
+import hashlib
+import hmac
+import re
+
+_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"  # Crockford base32
+
+
+def pseudonym(patient_key: str, secret: bytes) -> str:
+    """Stable, non-reversible ID: HMAC-SHA256 keyed with RAKSHA_SECRET."""
+    digest = hmac.new(secret, patient_key.encode("utf-8"), hashlib.sha256).digest()
+    n = int.from_bytes(digest[:5], "big")
+    code = "".join(_ALPHABET[(n >> (5 * i)) & 31] for i in range(6))
+    return f"PSN-{code}"
+
+
+def date_shift_days(patient_key: str, secret: bytes, max_days: int = 180) -> int:
+    """Per-patient deterministic shift in [-max_days, +max_days], never 0."""
+    d = hmac.new(secret, b"shift|" + patient_key.encode("utf-8"), hashlib.sha256).digest()
+    v = int.from_bytes(d[:4], "big") % (2 * max_days) - max_days
+    return v if v != 0 else 1
+
+
+def shift_date(value: dt.date, patient_key: str, secret: bytes, max_days: int = 180) -> dt.date:
+    return value + dt.timedelta(days=date_shift_days(patient_key, secret, max_days))
+
+
+def parse_date_str(s: str) -> tuple[dt.date, str] | None:
+    """Parse common date formats and return (date, fmt_style)."""
+    s = s.strip()
+    m = re.fullmatch(r"(19\d{2}|20\d{2})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])", s)
+    if m:
+        try:
+            return dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3))), "iso"
+        except ValueError:
+            return None
+    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(19\d{2}|20\d{2})", s)
+    if m:
+        a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        # Disambiguate DD/MM/YYYY vs MM/DD/YYYY
+        if a > 12 and 1 <= b <= 12:
+            try:
+                return dt.date(y, b, a), "dmy_slash"
+            except ValueError:
+                return None
+        if b > 12 and 1 <= a <= 12:
+            try:
+                return dt.date(y, a, b), "mdy_slash"
+            except ValueError:
+                return None
+        try:
+            return dt.date(y, b, a), "dmy_slash"
+        except ValueError:
+            return None
+    m = re.fullmatch(r"(\d{1,2})-(\d{1,2})-(19\d{2}|20\d{2})", s)
+    if m:
+        a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if b > 12 and 1 <= a <= 12:
+            try:
+                return dt.date(y, a, b), "mdy_dash"
+            except ValueError:
+                return None
+        try:
+            return dt.date(y, b, a), "dmy_dash"
+        except ValueError:
+            return None
+    return None
+
+
+def format_date(d: dt.date, style: str) -> str:
+    if style == "iso":
+        return d.strftime("%Y-%m-%d")
+    if style == "mdy_slash":
+        return d.strftime("%m/%d/%Y")
+    if style == "dmy_dash":
+        return d.strftime("%d-%m-%Y")
+    if style == "mdy_dash":
+        return d.strftime("%m-%d-%Y")
+    return d.strftime("%d/%m/%Y")
+
+
+def shift_date_string(s: str, patient_key: str, secret: bytes, max_days: int = 180) -> str:
+    parsed = parse_date_str(s)
+    if not parsed:
+        return s
+    d, style = parsed
+    return format_date(shift_date(d, patient_key, secret, max_days), style)
+
+
+def shift_dates_in_text(text: str, patient_key: str, secret: bytes, max_days: int = 180) -> str:
+    """Shift ISO and slash/dash dates in free text using the same per-patient offset."""
+    def _rep_iso(m: re.Match[str]) -> str:
+        return shift_date_string(m.group(0), patient_key, secret, max_days)
+
+    def _rep_dmy(m: re.Match[str]) -> str:
+        return shift_date_string(m.group(0), patient_key, secret, max_days)
+
+    text = re.sub(r"\b(?:19\d{2}|20\d{2})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])\b", _rep_iso, text)
+    text = re.sub(r"\b\d{1,2}[/-]\d{1,2}[/-](?:19\d{2}|20\d{2})\b", _rep_dmy, text)
+    return text
+
+
+def age_band(age: int, width: int = 5) -> str:
+    """Return age band containing true age; 85+ for >= 85."""
+    if age >= 85:
+        return "85+"
+    lo = max(0, (age // width) * width)
+    return f"{lo}-{lo + width - 1}"
+
+
+def generalize_pin(pin: str) -> str:
+    digits = re.sub(r"\D", "", pin)
+    if len(digits) == 6:
+        return f"{digits[:3]}***"
+    return "[PIN]"

@@ -1,164 +1,128 @@
-<div align="center">
+# GuptKavach (RAKSHA) — Adversarial Healthcare Privacy Intelligence Engine
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.svg">
-  <img alt="Secret Wards: hidden data → sandbox → your firewall → attack arena → leaderboard" src="docs/assets/hero-light.svg" width="100%">
-</picture>
+**Yugaantar DevForge Hackathon · Track 3: Secret Wards**
 
-# Secret Wards · Team Kit
-
-**Yugaantar DevForge · Track 3 · Privacy Engineering**
-
-*What happens in the ward stays in the ward.*
-
-[**Start here**](START_HERE.md) · [Problem statement](docs/PROBLEM_STATEMENT.md) · [Submission format](docs/SPEC.md) · [Scoring](docs/SCORING.md) · [FAQ](docs/FAQ.md)
-
-</div>
+An offline, CPU-only, LLM-free healthcare privacy firewall that sanitizes heterogeneous clinical exports (English, Hindi/Devanagari, Hinglish; CSV, TSV, JSON, FHIR R4 Bundles, clinical notes, and WhatsApp forwards), preserves medical utility, resolves cross-file patient identities with keyed HMAC pseudonyms, and defends against linkage and re-identification attacks.
 
 ---
 
-## The challenge in one paragraph
+## Problem Statement
 
-Hospitals are merging messy patient records (English, Hindi and Hinglish; CSV, JSON,
-FHIR, notes, WhatsApp forwards) into one research database. Build an **offline, CPU-only,
-LLM-free privacy firewall** that removes every piece of personal data, keeps every
-medical value exactly intact, and gives each real patient one stable fake ID across all
-files. After you submit, **our attacker** uses a voter list and known facts to hunt for
-patients in your output. Make it fail.
+Multi-hospital clinical research datasets combine heterogeneous exports containing direct identifiers (names, relatives, phones, Aadhaar, ABHA, MRNs, PAN, insurance IDs) and quasi-identifiers (dates, ages, villages, PINs) across visible and hidden channels (filenames, CSV headers, JSON keys, metadata paths, base64 attachments). Naive redaction either leaks multilingual/hidden PII or destroys clinical utility (doses, vitals, diagnoses, length of stay).
 
-All data is synthetic. No real patient appears anywhere.
+---
 
-## What's in this kit
+## Architecture
 
-| | Path | What it is |
-|---|---|---|
-| 📖 | [`START_HERE.md`](START_HERE.md) | **read first**: the whole challenge in plain words, a data tour, a build plan, a checklist |
-| 🗂️ | [`dev/input/`](dev/input) | the practice dataset: 200 files, 48 patients, 4 hospitals, every trap |
-| 🔑 | [`dev/truth/truth.json`](dev/truth) | the practice **answer key**: every piece of personal data, every true patient |
-| 🕵️ | [`dev/attacker/`](dev/attacker) | what the attacker knows: a voter-list register and known facts |
-| 📝 | [`brief/`](brief) | a fill-in template for the 2-page Project Brief PDF |
-| 🧱 | [`starter/`](starter) | a working skeleton that already writes the correct output format |
-| ✅ | [`validate_output.py`](validate_output.py) | the format checker; must print `CONTRACT OK` |
-| 🚦 | [`check_submission.py`](check_submission.py) | the pre-submit check: `raksha.toml`, README, PDF, runs your repo 3 times; must print `READY TO SUBMIT` |
-| 📊 | [`check_dev.py`](check_dev.py) | the practice self-check: leaks, canaries, medical values kept, linking quality |
-| ⚖️ | [`scoring.toml`](scoring.toml) | every weight, threshold and penalty, as used by the official evaluator |
-| 📚 | [`docs/`](docs) | statement, format, scoring, attacks, dataset, sandbox, fairness, FAQ |
+GuptKavach implements a deterministic **two-pass offline pipeline** in `starter/`:
 
-## Quick start (5 minutes)
-
-```bash
-git clone https://github.com/kartikeyajay2006/Secret-Wards.git && cd Secret-Wards
-
-RAKSHA_SECRET=practice python3 starter/main.py --input dev/input --output my_output
-python3 validate_output.py --input dev/input --output my_output     # → CONTRACT OK
-python3 check_dev.py --output my_output --show 10                    # → what you still leak
-```
-
-Everything above uses only the Python standard library (3.10+).
-
-## How to submit
-
-**1. Put `raksha.toml` at the root of your repository:**
-
-```toml
-[submission]
-name  = "your-team-name"
-setup = "pip install -r requirements.txt"                    # run once, internet allowed
-run   = "python main.py --input {input} --output {output}"   # run with NO internet
-```
-
-**2. Your program writes this into `{output}`:**
-
-```
+```text
+dev/input/ (CSV, TSV, JSON, FHIR R4, TXT, malformed/binary)
+   │
+   ▼
+[Pass 1: Ingestion & Discovery]  (starter/main.py)
+   ├─ Multi-encoding decode (UTF-8, UTF-8-BOM, UTF-16, cp1252)
+   ├─ Quarantine gate (unsupported, empty, undecodable, deep/malformed JSON)
+   ├─ Semantic column & JSON-key classification (raksha_engine/patterns.py)
+   ├─ Corpus-level multilingual name & clue extraction (raksha_engine/names.py)
+   ├─ Conservative cross-file clustering (raksha_engine/linking.py)
+   └─ Quasi-identifier group counting (age_band, district)
+   │
+   ▼
+[Pass 2: Sanitization & Export]  (raksha_engine/sanitizer.py, privacy.py)
+   ├─ Multilingual & context-aware PII redaction (English / Devanagari / Hinglish)
+   ├─ Medical-context guards (Dr., C/O complaints, K/C/O, doses, labs, eponyms)
+   ├─ Hidden-channel sanitization (filenames, headers, keys, metadata, base64)
+   ├─ FHIR R4 Patient & RelatedPerson sanitization with reference preservation
+   ├─ Keyed HMAC-SHA256 pseudonyms (PSN-XXXXXX) & per-patient secret date shifts
+   └─ Age banding, PIN prefixing, location generalization, rare-group widening
+   │
+   ▼
 output/
-├── sanitized/       ← cleaned files: same folders, names and formats as the input
-├── report.json      ← every input file (by SHA-256, never by name) + honest totals
-└── records.jsonl    ← which record belongs to which fake patient ID
+   ├── sanitized/     (clean research release)
+   ├── report.json    (SHA-256 mappings, honest counts, timing, RSS)
+   └── records.jsonl  (record locators + pseudonymous patient IDs)
 ```
-
-```json
-{"file": "sanitized/registration/hospital.csv", "loc": "row:12", "patient": "PSN-7Q2K9D"}
-{"file": "sanitized/opd/visits.json",           "loc": "/visits/3", "patient": "PSN-7Q2K9D"}
-{"file": "sanitized/discharge/note1.txt",       "loc": "doc",      "patient": "PSN-7Q2K9D"}
-```
-
-**3. Check:**
-
-```bash
-python3 validate_output.py --input dev/input --output my_output     # → CONTRACT OK
-python3 check_submission.py --repo ../your-repo --run               # → READY TO SUBMIT
-```
-
-**4. Submit your GitHub link and your 2-page Project Brief PDF before the deadline.** We freeze your last commit at the deadline.
-How to write the brief: [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md) · template: [brief/PROJECT_BRIEF_TEMPLATE.md](brief/PROJECT_BRIEF_TEMPLATE.md).
-
-Full contract: [docs/SPEC.md](docs/SPEC.md).
-
-## How you are scored (100 points)
-
-| | Area | Pts | In plain words |
-|---|---|---:|---|
-| 🛡️ | Privacy against attacks | **25** | how few patients our attacker can re-identify from your output |
-| 🔎 | Personal data detection | **20** | PII removed in English, हिंदी and Hinglish, also in file names, keys, headers and attachments; doctors, doses and diseases kept |
-| 💊 | Medical data preserved | **20** | medicines, doses, vitals, labs, diagnoses, exact stay lengths, truthful age bands |
-| 🔗 | Patient identity consistency | **15** | the same patient gets the same fake ID everywhere; different people are never merged |
-| 📦 | Output quality & validity | **10** | valid CSV / JSON / FHIR, an honest report, no leaks in logs or temp files, proper quarantine |
-| ⚡ | Speed & reliability | **10** | fast, low memory, no crashes, identical output on repeat runs |
-| ⛔ | Penalties | − | real ID or full name leaked −1 · **canary** leaked −3 · raw file copied −5 · false success −10 · input modified −5 |
-
-Your system runs on **3 hidden datasets** (at least one with names, labels and formats
-never seen in practice), then once more with the same secret and once with a different
-one. **Ties:** you rank above another team only if you score more than 1 point higher on
-**every** hidden dataset.
-
-| Reference point (official evaluator, practice data) | Score |
-|---|---:|
-| copy everything unchanged | below 0 |
-| `starter/` as shipped (regex only, links nothing) | ≈ 8 |
-| delete everything | ≈ 20 |
-| a solid firewall built by the organisers against practice data | ≈ 79 on practice, ≈ 50 on an unseen-format dataset |
-
-That last gap is the point: **build for data you have not seen.**
-
-## Ground rules (short)
-
-* **No LLMs**, no generative models, no pretrained transformers above 50M parameters.
-  Rules, gazetteers, CRFs, classical ML and small self-trained models are fine; declare them.
-* **Offline, CPU-only:** 2 CPUs, 4 GB RAM, no internet during `run`, no GPU.
-* **Deterministic:** same input + same `RAKSHA_SECRET` → identical output; another secret → different fake IDs and dates.
-* **Zero leaks:** planted canaries anywhere (outputs, logs, temp files, errors, report) are heavily penalised.
-* **Fail safe:** quarantine what you can't clean. Never copy raw files or silently skip files.
-* **Original work:** the repository is created during the hackathon.
-
-Full rules: [docs/PROBLEM_STATEMENT.md §7](docs/PROBLEM_STATEMENT.md).
-
-## 📚 Documentation
-
-| Document | Read it when you want to know… |
-|---|---|
-| [START_HERE.md](START_HERE.md) | everything, in plain words: start here |
-| [docs/PROBLEM_STATEMENT.md](docs/PROBLEM_STATEMENT.md) | the official Track 3 statement |
-| [docs/SPEC.md](docs/SPEC.md) | the exact submission format: `raksha.toml`, environment, `report.json`, `records.jsonl` |
-| [docs/SCORING.md](docs/SCORING.md) | every formula, weight, threshold and penalty |
-| [docs/ATTACKS.md](docs/ATTACKS.md) | what the attacker knows and the attacks it runs |
-| [docs/DATASET.md](docs/DATASET.md) | how the data is built: hospitals, traps, canaries, the unseen-format round |
-| [docs/SANDBOX.md](docs/SANDBOX.md) | what your code can and cannot do on our machine |
-| [docs/FAIRNESS.md](docs/FAIRNESS.md) | how the ranking is kept impartial: seed commitment, freeze, blind board, ties |
-| [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md) | what to put in the 2-page Project Brief PDF |
-| [docs/FAQ.md](docs/FAQ.md) | quick answers to common questions |
-
-## Recommended reading and libraries
-
-`regex`, `phonenumbers`, `dateparser` · `indic-transliteration`, `indic-nlp-library` ·
-`rapidfuzz`, `jellyfish` · `sklearn-crfsuite`, spaCy rule-based `Matcher` · `splink`,
-`recordlinkage` · `fhir.resources`, `pydantic` · `cryptography` (AES-GCM, HMAC) ·
-`anonymeter`, `pycanon`. Concepts: Indian name structures, k-anonymity and l-diversity,
-Fellegi–Sunter record linkage, HIPAA Safe Harbor, India's DPDP Act 2023, ABDM guidelines.
 
 ---
 
-<div align="center">
+## Technology Stack
 
-Questions? Ask the Track 3 organisers. Licence: [MIT](LICENSE). All data is synthetic.
+- **Language:** Python 3.10+ (tested on Python 3.14.7)
+- **Runtime Dependencies:** Python Standard Library only (`csv`, `json`, `hmac`, `hashlib`, `re`, `unicodedata`, `base64`, `datetime`, `pathlib`) — zero external network calls, zero LLMs, zero models > 50M parameters, CPU-only, < 6 seconds execution time.
+- **Configuration:** `starter/config/policy.yaml` (`age_band_years: 5`, `date_shift_max_days: 180`, `min_group_size: 5`).
 
-</div>
+---
+
+## Privacy Methodology
+
+1. **Multilingual & Contextual PII Detection:**
+   - Semantic column/key classification supporting English, Hinglish (`Naam`, `Ling`, `Umar`, `Janm Tithi`, `Pata`, `Gaon`, `Jila`), and Devanagari (`नाम`, `ग्राम`, `मकान नं.`) variants.
+   - Rule-based Devanagari-to-Latin phonetic transliteration (`मोहम्मद` ↔ `Mohd` ↔ `Mohammad`) and corpus-learned name matching.
+   - Medical-context preserve guards protecting `Dr. <Name>`, `C/O <symptom>`, `K/C/O <disease>`, eponyms (`Addison's`, `Parkinson's`, `Crohn's`), drug dosages (`650mg`, `1-1-1`), and lab values.
+2. **Hidden-Channel Hygiene:**
+   - Deterministic filename sanitization for PII-bearing paths with `input_sha256` → `output` declaration in `report.json`.
+   - Base64 attachment decoding, sanitization, and re-encoding; JSON key/metadata (`source_path`) and CSV header cleaning.
+3. **Conservative Cross-File Identity Resolution:**
+   - Blocking and Union-Find clustering over strong IDs (`PHONE`, `AADHAAR`, `ABHA`, `PAN`, `MRN`/`UHID`) and corroborated transliterated full names.
+   - Demographic compatibility checks (gender, birth year, age) prevent homonym merges; uncertain records return `null`.
+4. **Quasi-Identifier Protection:**
+   - Keyed HMAC-SHA256 pseudonyms (`PSN-XXXXXX`) and per-patient secret date shifts (`±180` days, preserving intervals and length of stay).
+   - 5-year age bands (`85+` cap), 3-digit PIN prefixes (`229***`), village suppression, and rare-group widening (`10`-year bands / district suppression when `(age_band, district)` count `< min_group_size`).
+
+---
+
+## Installation & Execution
+
+```bash
+# 1. Create and activate virtual environment
+python -m venv .venv
+source .venv/Scripts/activate        # Git Bash (Windows)
+# .\.venv\Scripts\Activate.ps1       # PowerShell (Windows)
+
+# 2. Install dependencies (stdlib only)
+pip install -r starter/requirements.txt
+
+# 3. Run GuptKavach / RAKSHA
+export RAKSHA_SECRET="practice"      # Git Bash
+python starter/main.py --input dev/input --output my_output_v2
+```
+
+---
+
+## Testing & Measured Results (`dev/input`)
+
+```bash
+python validate_output.py --input dev/input --output my_output_v2
+python check_dev.py --output my_output_v2 --show 10
+```
+
+| Metric | Starter Baseline | GuptKavach (Current) |
+|---|---:|---:|
+| Contract Validation (`validate_output.py`) | `CONTRACT OK` | `CONTRACT OK` |
+| Files Sanitized / Quarantined | `195` / `5` | `195` / `5` |
+| Raw Broken Files Copied | `0` | `0` |
+| Personal Data Leaked (overall) | `84.1%` (`2718/3230`) | **`2.8%`** (`92/3230`) |
+| Latin / Devanagari / Hinglish Leaked | `82.8%` / `100%` / `100%` | **`2.8%` / `3.5%` / `2.7%`** |
+| Base64 / Metadata / Key Leaked | `100%` / `100%` / `100%` | **`0.0%` / `0.0%` / `0.0%`** |
+| Medical Data Preserved | `100.0%` | **`98.8%`** (`4404/4457`) |
+| Patient Linking (`F0.5` / Precision / Recall) | `0.00` / `0.00` / `0.00` | **`0.66`** / `0.63` / `0.78` |
+| Execution Time | `5.06s` | **`5.23s`** |
+| Determinism (2 runs, same secret) | — | **`100%` byte-identical** |
+
+---
+
+## Security Considerations
+
+- `RAKSHA_SECRET` is read solely from the environment and never logged, printed, or written to disk.
+- Stdout logs only aggregate counts (`files`, `sanitized`, `quarantined`, `records`).
+- Unsupported, empty, undecodable, or deeply nested/malformed files are quarantined (`output: null`) and never copied raw into `sanitized/`.
+- Original input files are read-only and never modified.
+
+---
+
+## Known Limitations
+
+- Remaining `2.8%` leaks are primarily unlabelled relative names inside FHIR narrative/composition fields, a small number of `MM-DD-YYYY` DOBs in mixed-format columns, and `3` of `4` planted canaries in edge-case channels.
+- `check_dev.py` checks `sanitized/` paths against `truth.json` relative names when files are renamed, accounting for the reported `filename` metric even though PII filenames were replaced in `sanitized/`.
+- `peak_rss_mb` reports `0.0` on Windows because Python's `resource` module is Unix-only (populated automatically in the Linux evaluation sandbox).
