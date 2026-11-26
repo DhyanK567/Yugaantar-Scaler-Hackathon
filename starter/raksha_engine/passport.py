@@ -492,10 +492,12 @@ def _resolve_timestamp() -> str:
     epoch = os.environ.get("SOURCE_DATE_EPOCH", "").strip()
     if epoch and epoch.isdigit():
         return dt.datetime.fromtimestamp(int(epoch), tz=dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return dt.datetime.now(tz=dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return "NOT_TIMESTAMPED"
 
 
 def _compute_expiry(created_iso: str, days: int = 365) -> str:
+    if created_iso == "NOT_TIMESTAMPED":
+        return "NOT_SET"
     try:
         parsed = dt.datetime.fromisoformat(created_iso.replace("Z", "+00:00"))
         return (parsed + dt.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
