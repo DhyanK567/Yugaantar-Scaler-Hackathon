@@ -16,7 +16,11 @@ DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "guptkavach.
 
 def get_db_path() -> Path:
     override = os.environ.get("MEDILOCKER_DB_PATH")
-    p = Path(override) if override else DEFAULT_DB_PATH
+    if override:
+        p = Path(override)
+    else:
+        data_dir = os.environ.get("MEDILOCKER_DATA_DIR")
+        p = (Path(data_dir) / "guptkavach.db") if data_dir else DEFAULT_DB_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
