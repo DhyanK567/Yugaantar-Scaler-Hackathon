@@ -22,6 +22,8 @@ import time
 from collections import Counter
 from pathlib import Path
 
+from raksha_engine.attacker import RecordProfile, simulate_attacks
+from raksha_engine.clinical_validator import validate_fhir_r4_bundle
 from raksha_engine.linking import (
     RecordClues,
     extract_clues_from_text,
@@ -29,33 +31,81 @@ from raksha_engine.linking import (
     resolve_identities,
     set_name_clue,
 )
+from raksha_engine.mitigation import MitigationRecord, plan_record_mitigation
 from raksha_engine.names import CorpusNameIndex, extract_names_from_text, is_clinical_phrase
 from raksha_engine.patterns import classify_field, is_clinical_safe_field, normalize_digits
-from raksha_engine.privacy import age_band, pseudonym
+from raksha_engine.privacy import age_band, generalize_pin, pseudonym, shift_date_string
+from raksha_engine.privacy_utility import (
+    ClinicalUtilityMetrics,
+    PrivacyMetrics,
+    evaluate_release_gate,
+)
+from raksha_engine.risk_engine import evaluate_corpus_risk
 from raksha_engine.sanitizer import (
     sanitize_filename,
     sanitize_free_text,
     sanitize_json_node,
     sanitize_structured_cell,
 )
-from raksha_engine.crypto import (
-    GuptKavachKeyRing,
-    InvalidSecretError,
-)
+from raksha_engine.crypto import GuptKavachKeyRing, InvalidSecretError
 from raksha_engine.secure_fs import verify_path_containment
 from raksha_engine.quarantine import QuarantineVault
 
 
+def _peak_rss_mb() -> float:
+    """Return process peak RSS in MB across Windows and POSIX without external deps."""
+    try:
+        import resource  # type: ignore[import-not-found]
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return round(rss / (1024 * 1024) if sys.platform == "darwin" else rss / 1024, 2)
+    except ImportError:
+        pass
+    try:
+        import ctypes
+        import ctypes.wintypes as wt
+
+        class _PMC(ctypes.Structure):
+            _fields_ = [
+                ("cb", wt.DWORD),
+                ("PageFaultCount", wt.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        pmc = _PMC()
+        pmc.cb = ctypes.sizeof(_PMC)
+        hproc = ctypes.windll.kernel32.GetCurrentProcess()
+        fn = getattr(ctypes.windll.kernel32, "K32GetProcessMemoryInfo", None) or getattr(
+            ctypes.windll.psapi, "GetProcessMemoryInfo", None
+        )
+        if fn and fn(hproc, ctypes.byref(pmc), pmc.cb):
+            return round(pmc.PeakWorkingSetSize / (1024 * 1024), 2)
+    except (AttributeError, OSError):
+        pass
+    return 0.0
+
 
 def load_policy(path: Path) -> dict:
     """Tiny `key: value` reader for config/policy.yaml (no PyYAML needed)."""
-    policy = {}
+    policy: dict = {}
     if path.exists():
         for line in path.read_text(encoding="utf-8").splitlines():
             line = line.split("#", 1)[0].strip()
             if ":" in line:
                 k, v = (x.strip() for x in line.split(":", 1))
-                policy[k] = int(v) if v.lstrip("-").isdigit() else v
+                if v.lstrip("-").isdigit():
+                    policy[k] = int(v)
+                else:
+                    try:
+                        policy[k] = float(v)
+                    except ValueError:
+                        policy[k] = v
     return policy
 
 
@@ -168,14 +218,17 @@ def main() -> int:
     ap.add_argument("--output", required=True)
     a = ap.parse_args()
 
+    Stats.identifiers = 0
+    Stats.records = 0
+    Stats.linked = 0
+    Stats.generalized = 0
+    Stats.suppressed = 0
+
     t0 = time.monotonic()
     inp, out = Path(a.input.strip("'\"")).resolve(), Path(a.output.strip("'\"")).resolve()
     san = out / "sanitized"
     san.mkdir(parents=True, exist_ok=True)
-
-    # Initialize key ring for cryptographic security
     keyring = GuptKavachKeyRing(SECRET) if SECRET else None
-
 
     max_days = int(POLICY.get("date_shift_max_days", 180))
     min_group = int(POLICY.get("min_group_size", 5))
@@ -190,19 +243,15 @@ def main() -> int:
     local_firsts: dict[str, set[str]] = {}
 
     for path in sorted(p for p in inp.rglob("*") if p.is_file()):
-        # Path traversal and symlink security verification
         try:
             canonical_path = verify_path_containment(path, inp)
         except Exception:
-            # Reject symlinks or escaped paths
             continue
-
         rel = canonical_path.relative_to(inp).as_posix()
         raw = canonical_path.read_bytes()
         sha = hashlib.sha256(raw).hexdigest()
         ext = canonical_path.suffix.lower()
         item: dict = {"rel": rel, "sha": sha, "ext": ext, "status": "ok"}
-
 
         try:
             if ext not in (".csv", ".tsv", ".json", ".txt"):
@@ -340,12 +389,72 @@ def main() -> int:
             s.update(cluster_firsts[ckey])
         return s or None
 
-    # Compute quasi-identifier group sizes for rare-group suppression
+    # Compute quasi-identifier group sizes & pre-mitigation adversarial risk
     qi_counts: Counter[tuple[str, str]] = Counter()
     for c in all_clues:
         sig = _qi_signature(c)
         if sig:
             qi_counts[sig] += 1
+
+    cluster_sizes: Counter[str] = Counter(v for v in cluster_map.values() if v)
+    pre_profiles: list[RecordProfile] = []
+    for c in all_clues:
+        ck = cluster_map.get(c.record_id)
+        pre_profiles.append(
+            RecordProfile(
+                record_id=c.record_id,
+                patient_key=ck or c.record_id,
+                age_val=str(c.age) if c.age is not None else "",
+                birth_year=str(c.birth_year) if c.birth_year else "",
+                gender=c.gender,
+                district=c.district.casefold() if c.district else "",
+                village_or_loc=c.village.casefold() if c.village else "",
+                pin=c.pin,
+                record_count=cluster_sizes.get(ck, 1) if ck else 1,
+            )
+        )
+    pre_attack = simulate_attacks(pre_profiles, min_group_size=min_group)
+    pre_risk = evaluate_corpus_risk(pre_profiles, POLICY)
+    post_profiles: list[RecordProfile] = []
+    mitigation_actions: Counter[str] = Counter()
+
+    def _apply_mitigation_and_record(rid: str, ckey: str | None) -> bool:
+        c_obj = clues_by_rid.get(rid)
+        sig = _qi_signature(c_obj) if c_obj else None
+        assess = pre_risk.assessments.get(rid)
+        rare = bool(
+            (sig and qi_counts[sig] < min_group)
+            or (assess and (assess.below_min_group or assess.risk_category in ("HIGH", "CRITICAL")))
+        )
+        if c_obj and assess:
+            plan = plan_record_mitigation(
+                assess,
+                POLICY,
+                has_age=c_obj.age is not None,
+                has_date=bool(c_obj.birth_year),
+                has_pin=bool(c_obj.pin),
+                has_district=bool(c_obj.district),
+                has_village=bool(c_obj.village),
+            )
+            for mr in plan.records:
+                mitigation_actions[mr.action] += 1
+            if any(mr.action.startswith("SUPPRESS_") for mr in plan.records):
+                Stats.suppressed += 1
+            ck = ckey or rid
+            post_profiles.append(
+                RecordProfile(
+                    record_id=rid,
+                    patient_key=ck,
+                    age_val=age_band(c_obj.age, width=plan.age_band_width) if c_obj.age is not None else "",
+                    birth_year="",  # exact birthDate shifted or redacted
+                    gender=c_obj.gender,
+                    district="" if (rare and plan.suppress_district) else (c_obj.district.casefold() if c_obj.district else ""),
+                    village_or_loc="",  # village/locality always suppressed
+                    pin="" if rare else (generalize_pin(c_obj.pin) if c_obj.pin else ""),
+                    record_count=cluster_sizes.get(ckey, 1) if ckey else 1,
+                )
+            )
+        return rare
 
     # ------------------------------------------------------------------
     # PASS 2: Sanitize and export
@@ -353,6 +462,9 @@ def main() -> int:
     files_report: list[dict] = []
     records: list[dict] = []
     used_out_paths: set[str] = set()
+    fhir_bundles_checked = 0
+    fhir_resources_checked = 0
+    fhir_failures: list[dict[str, str]] = []
 
     for item in parsed_files:
         rel = item["rel"]
@@ -397,9 +509,7 @@ def main() -> int:
                         rid = f"{rel}::row:{i}"
                         ckey = cluster_map.get(rid)
                         pid = pseudonym(ckey, SECRET) if ckey else None
-                        c_obj = clues_by_rid.get(rid)
-                        sig = _qi_signature(c_obj) if c_obj else None
-                        rare = bool(sig and qi_counts[sig] < min_group)
+                        rare = _apply_mitigation_and_record(rid, ckey)
 
                         out_row: list[str] = []
                         row_gen = False
@@ -437,9 +547,7 @@ def main() -> int:
                     rid = f"{rel}::doc"
                     ckey = cluster_map.get(rid)
                     pid = pseudonym(ckey, SECRET) if ckey else None
-                    c_obj = clues_by_rid.get(rid)
-                    sig = _qi_signature(c_obj) if c_obj else None
-                    rare = bool(sig and qi_counts[sig] < min_group)
+                    rare = _apply_mitigation_and_record(rid, ckey)
 
                     clean_data, n_id, gen = sanitize_json_node(
                         data, "", name_index, ckey or rid, pid, SECRET, max_days,
@@ -465,9 +573,7 @@ def main() -> int:
                                 rid = f"{rel}::{ptr}"
                                 ckey = cluster_map.get(rid)
                                 pid = pseudonym(ckey, SECRET) if ckey else None
-                                c_obj = clues_by_rid.get(rid)
-                                sig = _qi_signature(c_obj) if c_obj else None
-                                rare = bool(sig and qi_counts[sig] < min_group)
+                                rare = _apply_mitigation_and_record(rid, ckey)
 
                                 c_obj_out, n_id, gen = sanitize_json_node(
                                     obj, k, name_index, ckey or rid, pid, SECRET, max_days,
@@ -488,12 +594,19 @@ def main() -> int:
                             )
                             Stats.identifiers += n_id
                             clean_data[clean_k] = c_v
+                if isinstance(clean_data, dict) and clean_data.get("resourceType") == "Bundle":
+                    fres = validate_fhir_r4_bundle(clean_data, location=out_rel)
+                    fhir_bundles_checked += fres.bundles_checked
+                    fhir_resources_checked += fres.resources_checked
+                    for fl in fres.failures:
+                        fhir_failures.append({"code": fl.code, "location": fl.location, "detail": fl.detail})
                 out_text = json.dumps(clean_data, ensure_ascii=False, indent=2) + "\n"
 
             else:  # txt
                 rid = f"{rel}::doc"
                 ckey = cluster_map.get(rid)
                 pid = pseudonym(ckey, SECRET) if ckey else None
+                _apply_mitigation_and_record(rid, ckey)
                 out_text, n_id = sanitize_free_text(
                     item["text"], name_index, ckey or rid, SECRET, max_days,
                     local_first_names=_firsts_for(rid, ckey),
@@ -508,8 +621,7 @@ def main() -> int:
 
             dest = san / out_rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            with open(dest, "w", encoding="utf-8", newline="") as f:
-                f.write(out_text)
+            dest.write_text(out_text, encoding="utf-8", newline="")
             entry.update(output=f"sanitized/{out_rel}", status="sanitized")
 
         except (ValueError, RecursionError, UnicodeError, csv.Error) as exc:
@@ -526,6 +638,24 @@ def main() -> int:
             f.write(json.dumps(r, ensure_ascii=False, sort_keys=True) + "\n")
 
     n_san = sum(e["status"] == "sanitized" for e in files_report)
+    n_linked = sum(r["patient"] is not None for r in records)
+    post_attack = simulate_attacks(post_profiles, min_group_size=min_group)
+    post_risk = evaluate_corpus_risk(post_profiles, POLICY)
+    priv_metrics = PrivacyMetrics(
+        direct_identifiers_detected=Stats.identifiers,
+        pre_attack_successes=sum(pre_attack.strategy_success_counts.values()),
+        post_attack_successes=sum(post_attack.strategy_success_counts.values()),
+        pre_uniquely_distinguishable=pre_attack.uniquely_distinguishable_records,
+        post_uniquely_distinguishable=post_attack.uniquely_distinguishable_records,
+        unique_candidate_groups=post_risk.unique_candidate_groups,
+        records_below_min_group=post_risk.records_below_min_group,
+        generalizations_applied=Stats.generalized,
+        suppressions_applied=Stats.suppressed,
+        files_quarantined=len(files_report) - n_san,
+    )
+    util_metrics = ClinicalUtilityMetrics(records_processed=len(records), records_linked=n_linked)
+    gate = evaluate_release_gate(priv_metrics, util_metrics, post_risk, pre_attack, post_attack, POLICY)
+
     report = {
         "schema": "raksha-report/1",
         "files": files_report,
@@ -535,13 +665,45 @@ def main() -> int:
             "files_quarantined": len(files_report) - n_san,
             "records_processed": len(records),
             "identifiers_detected": Stats.identifiers,
-            "records_linked": sum(r["patient"] is not None for r in records),
+            "records_linked": n_linked,
             "records_generalized": Stats.generalized,
             "records_suppressed": Stats.suppressed,
             "records_quarantined": 0,
         },
+        "privacy_intelligence": {
+            "policy_version": gate.policy_version,
+            "release_gate": {
+                "status": gate.status,
+                "reason_codes": gate.reason_codes,
+                "risk_categories": gate.risk_categories,
+                "affected_record_counts": gate.affected_record_counts,
+                "recommended_mitigation": gate.recommended_mitigation,
+            },
+            "attack_simulation": {
+                "strategies": pre_attack.strategies_run,
+                "pre_uniquely_distinguishable": pre_attack.uniquely_distinguishable_records,
+                "post_uniquely_distinguishable": post_attack.uniquely_distinguishable_records,
+                "pre_attack_successes": pre_attack.strategy_success_counts,
+                "post_attack_successes": post_attack.strategy_success_counts,
+            },
+            "risk_summary": {
+                "pre_categories": pre_risk.category_counts,
+                "post_categories": post_risk.category_counts,
+                "records_below_min_group_pre": pre_risk.records_below_min_group,
+                "records_below_min_group_post": post_risk.records_below_min_group,
+                "unique_candidate_groups_post": post_risk.unique_candidate_groups,
+                "note": "estimated_risk_score is a structural index (0-100), distinct from measured group size k",
+            },
+            "mitigation_actions": dict(sorted(mitigation_actions.items())),
+        },
+        "clinical_integrity": {
+            "fhir_bundles_checked": fhir_bundles_checked,
+            "fhir_resources_checked": fhir_resources_checked,
+            "fhir_validation_passed": len(fhir_failures) == 0,
+            "fhir_failures": fhir_failures[:20],
+        },
         "timing": {"seconds": round(time.monotonic() - t0, 2)},
-        "resources": {"peak_rss_mb": 0.0},
+        "resources": {"peak_rss_mb": _peak_rss_mb()},
     }
     (out / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"files {len(files_report)} sanitized {n_san} quarantined {len(files_report) - n_san} records {len(records)}")

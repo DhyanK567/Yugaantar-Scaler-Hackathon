@@ -83,9 +83,10 @@ _COL_RULES: list[tuple[str, re.Pattern[str]]] = [
 
 # Columns that must NEVER be redacted as patient PII
 CLINICAL_SAFE_COLS = re.compile(
-    r"\b(drug|medicine|medication|strength|dose|dosage|form|category|schedule|frequency|duration|"
-    r"diagnosis|icd|code|display|procedure|package|complaint|complaints|history|vitals|bp|pulse|"
-    r"temp|temperature|spo2|weight|height|bmi|lab|test|result|value|unit|range|reference|normal|"
+    r"\b(drug|medicine|medication|strength|dose|dosage|dosequantity|form|category|schedule|frequency|duration|route|"
+    r"instructions|regimen|diagnosis|icd|snomed|loinc|code|display|procedure|package|complaint|complaints|history|"
+    r"vitals|bp|pulse|temp|temperature|spo2|weight|height|bmi|lab|test|panel|specimen|result|value|valuequantity|"
+    r"unit|range|reference|normal|allergy|allergies|reaction|severity|onset|encounter|observation|condition|"
     r"department|ward|bed|hospital|system|status|amount|inr|total|visits|count|type|category|"
     r"दवा|खुराक|निदान|लक्षण|जांच|परिणाम|वार्ड|अस्पताल)\b"
 )
@@ -191,9 +192,10 @@ RX_VILLAGE_BEFORE_TEHSIL = re.compile(
     r"(?im)(?<=,\s)(?!(?:H\.?\s*No|House|Makan|Flat|Ward|Mohalla|near|opp|opposite|behind|C/O|S/o|D/o|W/o)\b)"
     r"(?P<val>[A-Za-z\u0900-\u097f][A-Za-z\u0900-\u097f\s]{2,35}?)(?=\s*,\s*(?:Tehsil|Taluka|Block|तहसील|जिला|Distt?\.?)\b)"
 )
-
 # PIN Code: 6 digits starting with 1-8 (must not be part of a dosage or medical measurement)
-RX_PIN = re.compile(r"(?<!\d)(?<!-)[1-8]\d{5}(?!\d)(?!-)")
+RX_PIN = re.compile(
+    r"(?<!\d)(?<!-)(?<!\.)[1-8]\d{5}(?!\d)(?!-)(?!\s*(?:/uL|/cumm|/mm3|mg|mcg|ml|mmol|mmhg|g/dl|units|bpm|kg|cm|%)\b)"
+)
 
 # Dates: DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD
 RX_DATE_ISO = re.compile(r"\b(19\d{2}|20\d{2})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b")

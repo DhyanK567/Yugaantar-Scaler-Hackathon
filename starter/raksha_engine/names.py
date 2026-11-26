@@ -30,11 +30,20 @@ CLINICAL_STOPWORDS = {
     "hospital", "clinic", "pathology", "pharmacy", "billing", "claim", "helpdesk", "ticket",
     "worker", "workers", "nurse", "duty", "staff", "attendant", "multispeciality",
     "charitable", "sadan", "seva", "trust", "foundation", "laboratory", "center", "centre",
+    "apollo", "department", "cardiology", "neurology", "oncology", "pediatrics", "orthopedics",
+    "myocardial", "infarction", "lymphoma", "chronic", "kidney", "tuberculosis",
+    "units", "twice", "thrice", "daily", "every", "hours", "hour", "hr", "hrs", "days", "weeks",
+    "oral", "intravenous", "subcutaneous", "topical", "drops", "ointment", "cream", "inhaler",
+    "bd", "tds", "qid", "od", "hs", "sos", "prn", "mg", "mcg", "ml", "mmol", "mmhg", "bpm", "kg", "cm", "dl",
+}
+
+_EPONYM_WORDS = {
     "addison", "addisons", "parkinson", "parkinsons", "crohn", "crohns", "hodgkin", "graves",
     "alzheimer", "alzheimers", "cushing", "bell", "guillain", "barre", "kawasaki", "meniere",
     "dyspnea", "micturition", "edema", "rash", "chills", "nausea", "headache", "jaundice",
     "बुखार", "दर्द", "खांसी", "उल्टी", "कमजोरी", "दस्त", "मलेरिया", "डेंगू", "टाइफाइड",
 }
+_EPONYM_SUFFIXES = {"disease", "syndrome", "lymphoma", "palsy", "triad", "sign"}
 
 # ---------------------------------------------------------------------------
 # Patterns for labeled names & relatives in free text (Multilingual)
@@ -77,7 +86,7 @@ RX_RELATIVE = re.compile(
     r"Father|Husband|Wife|Mother|Son|Daughter|Guardian|Caregiver|Attendant|Witness|"
     r"पिता|माता|पति|पत्नी|पुत्र|पुत्री|बेटा|बेटी|के\s+पुत्र|की\s+पत्नी|सपुत्र|वल्द|अभिभावक|परिचारक|गवाह|"
     r"pita|mata|pati|patni|beta|beti|walad"
-    r")\s*[:\-]?\s*)"
+    r")\b(?:\s*[:\-]\s*|\s+))"
     r"(?P<name>[A-Za-z\u0900-\u097f][A-Za-z\u0900-\u097f.\s]{1,35}?)(?=\s*(?:\n|,|;|\)|$))"
 )
 
@@ -94,8 +103,12 @@ RX_INITIAL_NAME = re.compile(
     r"\b(?:[A-Z]\.\s*){1,2}[A-Z][a-z]{2,18}\b"
 )
 
-# Doctor prefix guard
+# Doctor prefix guard & clinical organization/department guard
 RX_DOCTOR = re.compile(r"\b(?:Dr\.?|Doctor|डॉक्टर|डॉ\.)\s+[A-Za-z\u0900-\u097f][A-Za-z\u0900-\u097f.]+(?:\s+[A-Za-z\u0900-\u097f][A-Za-z\u0900-\u097f]+){0,2}")
+RX_ORG_PHRASE = re.compile(
+    r"\b(?:(?:[A-Z][A-Za-z]+\s+){1,3}(?:Hospital|Medical\s+Center|Medical\s+Centre|Clinic|Institute|Nursing\s+Home)|"
+    r"Department\s+of\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,2})\b"
+)
 
 
 def is_clinical_phrase(text: str) -> bool:
@@ -105,7 +118,13 @@ def is_clinical_phrase(text: str) -> bool:
         return False
     if "asha" in toks and (text.strip() == "ASHA" or "worker" in toks or "workers" in toks or "कार्यकर्ता" in toks):
         return True
-    return any(t in CLINICAL_STOPWORDS for t in toks)
+    if any(t in CLINICAL_STOPWORDS for t in toks):
+        return True
+    if any(t in _EPONYM_WORDS for t in toks):
+        # Treat eponym as clinical when single-word, possessive ('s), or paired with clinical suffix
+        if len(toks) == 1 or "'" in text or any(t in _EPONYM_SUFFIXES for t in toks):
+            return True
+    return False
 
 
 def normalize_name_tokens(name: str) -> list[str]:
@@ -182,8 +201,8 @@ class CorpusNameIndex:
         escaped = [re.escape(c) for c in candidates if len(c) >= 3]
         if not escaped:
             return None
-        # Match whole-word boundaries for Latin and Unicode boundary for Devanagari
-        pattern = r"(?<!\w)(?:" + "|".join(escaped) + r")(?!\w)"
+        # Match whole-word boundaries for Latin/Devanagari while never matching all-caps ASHA acronym
+        pattern = r"(?<!\w)(?!(?-i:ASHA)\b)(?:" + "|".join(escaped) + r")(?!\w)"
         self._compiled_rx = re.compile(pattern, re.IGNORECASE)
         return self._compiled_rx
 
@@ -210,6 +229,7 @@ def redact_names_in_text(
     while strictly preserving Doctor names and clinical phrases.
     """
     count = 0
+    # 1. Protect "Dr. <Name>" and clinical organization/department spans with temporary placeholders
     doc_spans: list[str] = []
 
     def _save_doc(m: re.Match[str]) -> str:
@@ -217,6 +237,7 @@ def redact_names_in_text(
         return f"__RAKSHA_DOC_{len(doc_spans) - 1}__"
 
     work = RX_DOCTOR.sub(_save_doc, text)
+    work = RX_ORG_PHRASE.sub(_save_doc, work)
 
     # 1. Relatives: S/o, D/o, W/o, H/o, पिता, माता, पति, पत्नी, etc.
     def _sub_rel(m: re.Match[str]) -> str:
@@ -284,7 +305,10 @@ def redact_names_in_text(
             reverse=True,
         )
         if safe_firsts:
-            fn_rx = re.compile(r"(?<!\w)(?!ASHA\b)(?:" + "|".join(re.escape(f) for f in safe_firsts) + r")(?:'s)?(?!\w)")
+            fn_rx = re.compile(
+                r"(?<!\w)(?!(?-i:ASHA)\b)(?:" + "|".join(re.escape(f) for f in safe_firsts) + r")(?:'s)?(?!\w)",
+                re.IGNORECASE,
+            )
             work, n_fn = fn_rx.subn("[PATIENT_NAME]", work)
             count += n_fn
 
