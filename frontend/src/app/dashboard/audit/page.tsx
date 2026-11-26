@@ -5,19 +5,24 @@ import { FileText, RefreshCw, AlertTriangle } from "lucide-react";
 
 export default function AuditPage() {
   const [events, setEvents] = useState<AuditEvent[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [error, setError] = useState("");
 
-  function load() {
+  function load(targetPage = page) {
     setError("");
     api
-      .auditLogs()
-      .then(setEvents)
+      .auditEvents(targetPage, 25)
+      .then((res) => {
+        setEvents(res.events);
+        setTotal(res.total);
+      })
       .catch((e) => setError(e.message));
   }
 
   useEffect(() => {
-    load();
-  }, []);
+    load(page);
+  }, [page]);
 
   return (
     <div style={{ padding: "32px 36px" }}>
@@ -27,11 +32,11 @@ export default function AuditPage() {
             Audit Trail
           </h1>
           <p style={{ fontSize: 13.5, color: "#777777" }}>
-            Immutable governance log of sanitisation runs, policy updates and access events.
+            Append-only governance log. Never exposes OTPs, secrets, or raw PII.
           </p>
         </div>
         <button
-          onClick={load}
+          onClick={() => load(page)}
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -71,48 +76,24 @@ export default function AuditPage() {
         </div>
       )}
 
-      <div
-        style={{
-          background: "#FFFFFF",
-          border: "1.5px solid #DCDCDC",
-          borderRadius: 10,
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            padding: "14px 20px",
-            borderBottom: "1px solid #EEEEEE",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
+      <div style={{ background: "#FFFFFF", border: "1.5px solid #DCDCDC", borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ padding: "14px 20px", borderBottom: "1px solid #EEEEEE", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span style={{ fontSize: 14, fontWeight: 600, color: "#050505" }}>
-            Events ({events.length})
+            Audit Events ({total})
           </span>
           <FileText size={14} color="#777777" />
         </div>
 
         {events.length === 0 ? (
-          <div style={{ padding: 48, textAlign: "center", fontSize: 13, color: "#AAAAAA" }}>
+          <div style={{ padding: 48, textAlign: "center", fontSize: 13, color: "#777777" }}>
             No audit events recorded yet.
           </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ borderBottom: "1px solid #EEEEEE" }}>
-                {["Severity", "Event Type", "Description", "Timestamp"].map((h) => (
-                  <th
-                    key={h}
-                    style={{
-                      padding: "10px 20px",
-                      textAlign: "left",
-                      fontSize: 11.5,
-                      fontWeight: 600,
-                      color: "#777777",
-                    }}
-                  >
+                {["Outcome", "Action", "Actor", "Resource", "Details", "Timestamp"].map((h) => (
+                  <th key={h} style={{ padding: "10px 16px", textAlign: "left", fontSize: 11.5, fontWeight: 600, color: "#777777" }}>
                     {h}
                   </th>
                 ))}
@@ -121,7 +102,7 @@ export default function AuditPage() {
             <tbody>
               {events.map((ev) => (
                 <tr key={ev.id} style={{ borderBottom: "1px solid #F5F5F5" }}>
-                  <td style={{ padding: "12px 20px" }}>
+                  <td style={{ padding: "11px 16px" }}>
                     <span
                       style={{
                         display: "inline-block",
@@ -129,37 +110,52 @@ export default function AuditPage() {
                         borderRadius: 4,
                         fontSize: 10.5,
                         fontWeight: 600,
-                        textTransform: "uppercase",
                         background:
-                          ev.severity === "high"
+                          ev.outcome === "FAILED" || ev.outcome === "BLOCKED"
                             ? "#FFE5E5"
-                            : ev.severity === "medium"
-                            ? "#FFF5D6"
                             : "#F2F2F2",
                         color:
-                          ev.severity === "high"
+                          ev.outcome === "FAILED" || ev.outcome === "BLOCKED"
                             ? "#CC3333"
-                            : ev.severity === "medium"
-                            ? "#8A6500"
                             : "#050505",
                       }}
                     >
-                      {ev.severity ?? "info"}
+                      {ev.outcome}
                     </span>
                   </td>
-                  <td style={{ padding: "12px 20px", fontSize: 13, fontWeight: 500, color: "#050505" }}>
-                    {ev.event_type}
+                  <td style={{ padding: "11px 16px", fontSize: 12.5, fontWeight: 600, color: "#050505" }}>{ev.action}</td>
+                  <td style={{ padding: "11px 16px", fontSize: 12.5, color: "#555555" }}>{ev.actor_email || "system"}</td>
+                  <td style={{ padding: "11px 16px", fontSize: 12.5, color: "#555555" }}>
+                    {ev.resource_type} {ev.resource_id ? `(${ev.resource_id.slice(0, 10)})` : ""}
                   </td>
-                  <td style={{ padding: "12px 20px", fontSize: 13, color: "#555555" }}>
-                    {ev.description}
-                  </td>
-                  <td style={{ padding: "12px 20px", fontSize: 12, color: "#777777", whiteSpace: "nowrap" }}>
-                    {new Date(ev.created_at).toLocaleString()}
+                  <td style={{ padding: "11px 16px", fontSize: 12.5, color: "#666666" }}>{ev.details || "—"}</td>
+                  <td style={{ padding: "11px 16px", fontSize: 12, color: "#777777", whiteSpace: "nowrap" }}>
+                    {new Date(ev.timestamp * 1000).toLocaleString()}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        )}
+
+        {total > 25 && (
+          <div style={{ padding: "12px 20px", borderTop: "1px solid #EEEEEE", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5 }}>
+            <button
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              style={{ padding: "5px 12px", border: "1px solid #DCDCDC", borderRadius: 5, background: "#FFFFFF", cursor: "pointer" }}
+            >
+              Previous
+            </button>
+            <span>Page {page}</span>
+            <button
+              disabled={page * 25 >= total}
+              onClick={() => setPage((p) => p + 1)}
+              style={{ padding: "5px 12px", border: "1px solid #DCDCDC", borderRadius: 5, background: "#FFFFFF", cursor: "pointer" }}
+            >
+              Next
+            </button>
+          </div>
         )}
       </div>
     </div>
