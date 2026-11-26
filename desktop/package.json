@@ -32,10 +32,6 @@
       {
         "from": "web_dist",
         "to": "web"
-      },
-      {
-        "from": "node_runtime",
-        "to": "node"
       }
     ],
     "win": {
