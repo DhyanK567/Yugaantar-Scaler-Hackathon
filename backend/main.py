@@ -1,56 +1,96 @@
-"""GuptKavach Healthcare Privacy Firewall Backend API.
+"""MediLocker Healthcare Privacy Platform Backend API (Milestone 17).
 Built with FastAPI.
-Zero sanitisation logic is duplicated here; calls the official standalone engine.
+- Web authentication (SMTP Email OTP + Google OAuth 2.0/OIDC + RBAC) is decoupled
+  from the offline privacy engine (starter/main.py).
+- All dashboard, privacy, clinical, identity, passport, and audit endpoints are
+  backed by real SQLite persistence and real engine execution.
 """
 from __future__ import annotations
 
+import hashlib
+import html
 import io
 import json
 import os
 import re
-import shutil
+import secrets
 import time
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
+from .audit import record_audit_event
+from .auth import (
+    ROLE_AUDITOR,
+    ROLE_ORG_ADMIN,
+    ROLE_PLATFORM_ADMIN,
+    ROLE_PRIVACY_OFFICER,
+    ROLE_RESEARCHER,
+    clear_session_cookie,
+    create_google_auth_url,
+    get_google_config,
+    get_smtp_config,
+    handle_google_callback,
+    request_email_otp,
+    require_org_access,
+    require_roles,
+    require_user,
+    revoke_session_by_token,
+    set_session_cookie,
+    user_has_org_access,
+    verify_email_otp,
+)
 from .database import get_db, init_db
-from .engine_adapter import (
-    DEFAULT_OUTPUT,
-    DEV_INPUT,
-    STARTER_DIR,
-    compute_file_sha256,
-    execute_engine,
-    get_actual_dev_metrics,
-    parse_identity_continuity_graph,
+from .engine_adapter import STARTER_DIR, compute_file_sha256
+from .pipeline import (
+    DATASETS_DIR,
+    JOBS_DIR,
+    execute_job_pipeline,
+    launch_job_async,
+    run_attack_simulation_for_job,
 )
 
 init_db()
 
 app = FastAPI(
-    title="GuptKavach Healthcare Privacy Firewall API",
-    version="1.0.0",
-    description="Enterprise API for Healthcare Privacy Gateway & Control Centre",
+    title="MediLocker Healthcare Privacy Platform API",
+    version="2.0.0",
+    description="Integrated API for MediLocker Privacy Infrastructure, Identity Continuity, Clinical Integrity & Audit",
 )
+
+allowed_origins = [
+    o.strip()
+    for o in os.environ.get(
+        "FRONTEND_ORIGINS", "http://localhost:3001,http://localhost:3000"
+    ).split(",")
+    if o.strip()
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-JOBS_DIR = DATA_DIR / "jobs"
-DATASETS_DIR = DATA_DIR / "datasets"
-JOBS_DIR.mkdir(parents=True, exist_ok=True)
-DATASETS_DIR.mkdir(parents=True, exist_ok=True)
+ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".tsv", ".json", ".jsonl", ".txt", ".pdf", ".png"}
 
 
 def sanitize_filename(name: str) -> str:
@@ -60,8 +100,27 @@ def sanitize_filename(name: str) -> str:
     return cleaned
 
 
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def _authorised_org_ids(user: Dict[str, Any]) -> Optional[List[str]]:
+    if user.get("platform_role") == ROLE_PLATFORM_ADMIN:
+        return None  # unrestricted
+    return [m["organisation_id"] for m in user.get("memberships", [])]
+
+
+def _org_filter_clause(org_ids: Optional[List[str]], column: str = "organisation_id") -> tuple[str, list[Any]]:
+    if org_ids is None:
+        return "1=1", []
+    if not org_ids:
+        return "1=0", []
+    placeholders = ",".join("?" for _ in org_ids)
+    return f"{column} IN ({placeholders})", list(org_ids)
+
+
 # ==============================================================================
-# 1. Health & Dashboard
+# 1. Health & Authentication (SMTP OTP + Google OAuth 2.0)
 # ==============================================================================
 
 
@@ -69,267 +128,898 @@ def sanitize_filename(name: str) -> str:
 def get_health() -> Dict[str, Any]:
     return {
         "status": "healthy",
+        "platform": "MediLocker",
         "engine": "GuptKavach Offline Privacy Engine",
-        "engine_version": "1.0-deterministic",
+        "engine_version": "2.0-deterministic",
         "mode": "air-gapped-cpu",
-        "compliance": ["HIPAA Safe Harbor", "FHIR R4", "DPDP Act (India)", "ABHA/NDHM"],
         "timestamp": time.time(),
     }
 
 
-@app.get("/api/dashboard")
-def get_dashboard() -> Dict[str, Any]:
-    metrics = get_actual_dev_metrics()
-    with get_db() as conn:
-        recent_jobs = [
-            dict(row)
-            for row in conn.execute(
-                "SELECT * FROM jobs ORDER BY created_at DESC LIMIT 5"
-            ).fetchall()
-        ]
-
+@app.get("/api/auth/config")
+def get_auth_config() -> Dict[str, Any]:
+    smtp = get_smtp_config()
+    google = get_google_config()
     return {
-        "summary": {
-            "files_processed": metrics["files_total"],
-            "files_sanitized": metrics["files_sanitized"],
-            "files_quarantined": metrics["files_quarantined"],
-            "records_processed": metrics["records_processed"],
-            "records_linked": metrics["records_linked"],
-            "identifiers_detected": metrics["identifiers_detected"],
-            "medical_preservation_rate": metrics["medical_preservation_rate"],
-            "personal_data_protected_rate": metrics["personal_data_protected_rate"],
-            "canaries_leaked": metrics["canaries_leaked"],
-            "canaries_planted": metrics["canaries_planted"],
-            "linking_f0_5": metrics["linking_f0_5"],
-            "linking_precision": metrics["linking_precision"],
-            "linking_recall": metrics["linking_recall"],
-            "false_merges": metrics["false_merges"],
-        },
-        "recent_jobs": recent_jobs,
-        "engine_status": {
-            "state": "Operational & Armed",
-            "last_verified_contract": "CONTRACT OK",
-            "throughput": f"{metrics['processing_speed_fps']} files/sec",
-            "latency": f"{metrics['average_run_time_secs']}s batch runtime",
-        },
+        "smtp_enabled": smtp["configured"],
+        "google_enabled": google["configured"],
+        "google_client_id": google["client_id"] if google["configured"] else None,
+        "google_redirect_uri": google["redirect_uri"] if google["configured"] else None,
     }
 
 
+class RegisterBody(BaseModel):
+    email: str
+    full_name: str
+    organisation_id: Optional[str] = None
+
+
+@app.post("/api/auth/register")
+def register_user(body: RegisterBody, request: Request) -> Dict[str, Any]:
+    email = body.email.strip().lower()
+    if not re.match(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$", email):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    if not body.full_name.strip():
+        raise HTTPException(status_code=400, detail="Full name is required")
+
+    now = time.time()
+    with get_db() as conn:
+        existing = conn.execute("SELECT id FROM users WHERE lower(email) = ?", (email,)).fetchone()
+        if existing:
+            # Generic response to prevent account enumeration
+            return {
+                "status": "ok",
+                "message": "If this email is eligible, you can now sign in with Email OTP.",
+            }
+        user_id = f"usr-{secrets.token_hex(8)}"
+        conn.execute(
+            "INSERT INTO users (id, email, full_name, status, platform_role, created_at) VALUES (?, ?, ?, 'ACTIVE', 'USER', ?)",
+            (user_id, email, body.full_name.strip(), now),
+        )
+        # Assign default researcher membership on requested org (if exists) or first org
+        org_row = None
+        if body.organisation_id:
+            org_row = conn.execute("SELECT id FROM organisations WHERE id = ?", (body.organisation_id,)).fetchone()
+        if not org_row:
+            org_row = conn.execute("SELECT id FROM organisations ORDER BY joined_at ASC LIMIT 1").fetchone()
+        if org_row:
+            conn.execute(
+                "INSERT INTO memberships (id, user_id, organisation_id, role, created_at) VALUES (?, ?, ?, ?, ?)",
+                (f"mem-{secrets.token_hex(8)}", user_id, org_row["id"], ROLE_RESEARCHER, now),
+            )
+
+    record_audit_event(
+        action="USER_REGISTERED",
+        resource_type="user",
+        resource_id=user_id,
+        outcome="SUCCESS",
+        actor_id=user_id,
+        actor_email=email,
+        details="Registered new account",
+        ip_address=_client_ip(request),
+    )
+    return {
+        "status": "ok",
+        "message": "If this email is eligible, you can now sign in with Email OTP.",
+    }
+
+
+class OtpRequestBody(BaseModel):
+    email: str
+    purpose: str = "login"
+
+
+@app.post("/api/auth/otp/request")
+def auth_otp_request(body: OtpRequestBody, request: Request) -> Dict[str, Any]:
+    return request_email_otp(body.email, body.purpose, _client_ip(request))
+
+
+class OtpVerifyBody(BaseModel):
+    email: str
+    code: str
+    purpose: str = "login"
+
+
+@app.post("/api/auth/otp/verify")
+def auth_otp_verify(body: OtpVerifyBody, request: Request, response: Response) -> Dict[str, Any]:
+    raw_token, ctx = verify_email_otp(
+        body.email,
+        body.code,
+        body.purpose,
+        _client_ip(request),
+        request.headers.get("user-agent"),
+    )
+    set_session_cookie(response, raw_token)
+    return {"user": ctx, "token": raw_token}
+
+
+@app.get("/api/auth/google/login")
+def auth_google_login(
+    link_account: bool = False,
+    request: Request = None,  # type: ignore
+) -> Dict[str, str]:
+    link_user_id = None
+    if link_account:
+        from .auth import get_current_user_optional
+
+        # Require existing authenticated session to link Google account
+        raise HTTPException(status_code=400, detail="Use /api/auth/google/link while authenticated")
+    return create_google_auth_url(link_user_id=link_user_id)
+
+
+@app.post("/api/auth/google/link")
+def auth_google_link(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, str]:
+    return create_google_auth_url(link_user_id=user["id"])
+
+
+class GoogleCallbackBody(BaseModel):
+    code: str
+    state: str
+
+
+@app.post("/api/auth/google/callback")
+def auth_google_callback_post(
+    body: GoogleCallbackBody, request: Request, response: Response
+) -> Dict[str, Any]:
+    raw_token, ctx = handle_google_callback(
+        body.code,
+        body.state,
+        _client_ip(request),
+        request.headers.get("user-agent"),
+    )
+    set_session_cookie(response, raw_token)
+    return {"user": ctx, "token": raw_token}
+
+
+@app.get("/api/auth/google/callback")
+def auth_google_callback_get(
+    code: str, state: str, request: Request, response: Response
+) -> Dict[str, Any]:
+    raw_token, ctx = handle_google_callback(
+        code,
+        state,
+        _client_ip(request),
+        request.headers.get("user-agent"),
+    )
+    set_session_cookie(response, raw_token)
+    return {"user": ctx, "token": raw_token}
+
+
+@app.get("/api/auth/me")
+def auth_me(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    safe_user = {k: v for k, v in user.items() if k != "raw_token"}
+    return {"user": safe_user}
+
+
+class SwitchOrgBody(BaseModel):
+    organisation_id: str
+
+
+@app.post("/api/auth/switch-org")
+def auth_switch_org(body: SwitchOrgBody, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    require_org_access(user, body.organisation_id)
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE sessions SET active_org_id = ? WHERE id = ?",
+            (body.organisation_id, user["session_id"]),
+        )
+    return {"status": "ok", "active_org_id": body.organisation_id}
+
+
+@app.post("/api/auth/logout")
+def auth_logout(
+    request: Request, response: Response, user: Dict[str, Any] = Depends(require_user)
+) -> Dict[str, str]:
+    raw_token = user.get("raw_token")
+    if raw_token:
+        revoke_session_by_token(raw_token)
+    clear_session_cookie(response)
+    record_audit_event(
+        action="LOGOUT",
+        resource_type="session",
+        resource_id=user.get("session_id"),
+        outcome="SUCCESS",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user.get("active_role"),
+        organisation_id=user.get("active_org_id"),
+        ip_address=_client_ip(request),
+    )
+    return {"status": "ok"}
+
+
 # ==============================================================================
-# 2. Organisations & Settings
+# 2. Dashboard (Real Persistent Metrics + Strict Empty States)
+# ==============================================================================
+
+
+def _compute_dashboard_payload(user: Dict[str, Any]) -> Dict[str, Any]:
+    org_ids = _authorised_org_ids(user)
+    where_org, org_params = _org_filter_clause(org_ids, "organisation_id")
+
+    with get_db() as conn:
+        datasets_count = conn.execute(
+            f"SELECT COUNT(*) as c FROM datasets WHERE deleted_at IS NULL AND {where_org}",
+            org_params,
+        ).fetchone()["c"]
+
+        jobs_rows = [
+            dict(r)
+            for r in conn.execute(
+                f"""
+                SELECT j.*, d.name as dataset_name, o.name as organisation_name
+                FROM jobs j
+                LEFT JOIN datasets d ON d.id = j.dataset_id
+                LEFT JOIN organisations o ON o.id = j.organisation_id
+                WHERE {where_org.replace('organisation_id', 'j.organisation_id')}
+                ORDER BY j.created_at DESC
+                """,
+                org_params,
+            ).fetchall()
+        ]
+
+        assessments = [
+            dict(r)
+            for r in conn.execute(
+                f"SELECT * FROM privacy_assessments WHERE {where_org} ORDER BY created_at DESC",
+                org_params,
+            ).fetchall()
+        ]
+
+        clinical_rows = [
+            dict(r)
+            for r in conn.execute(
+                f"SELECT * FROM clinical_reports WHERE {where_org} ORDER BY created_at DESC",
+                org_params,
+            ).fetchall()
+        ]
+
+        identity_rows = [
+            dict(r)
+            for r in conn.execute(
+                f"SELECT * FROM identity_clusters WHERE {where_org} ORDER BY created_at DESC",
+                org_params,
+            ).fetchall()
+        ]
+
+        audit_rows = [
+            dict(r)
+            for r in conn.execute(
+                f"SELECT * FROM audit_events WHERE ({where_org} OR organisation_id IS NULL) ORDER BY timestamp DESC LIMIT 8",
+                org_params,
+            ).fetchall()
+        ]
+
+    completed_jobs = [
+        j for j in jobs_rows if j["status"] in ("COMPLETED", "COMPLETED_WITH_WARNINGS", "QUARANTINED", "BLOCKED")
+    ]
+    files_processed = sum(int(j.get("files_total") or 0) for j in completed_jobs)
+    files_sanitized = sum(int(j.get("files_sanitized") or 0) for j in completed_jobs)
+    files_quarantined = sum(int(j.get("files_quarantined") or 0) for j in completed_jobs)
+    records_processed = sum(int(j.get("records_processed") or 0) for j in completed_jobs)
+
+    # PII Detected
+    if assessments:
+        total_pii = sum(int(a["pii_detected"]) for a in assessments)
+        total_leaks = sum(int(a["residual_leakage"]) for a in assessments)
+        pii_metric = {
+            "value": total_pii,
+            "display": str(total_pii),
+            "status": "PASS" if total_leaks == 0 else "FAILED",
+            "description": f"{total_leaks} residual leaks across {len(assessments)} assessment(s)",
+        }
+    else:
+        pii_metric = {
+            "value": None,
+            "display": "Not measured",
+            "status": "NOT_MEASURED",
+            "description": "No privacy assessments executed yet",
+        }
+
+    # Clinical Values Preserved
+    total_exp = sum(int(c["expected_values"]) for c in clinical_rows)
+    total_pres = sum(int(c["preserved_values"]) for c in clinical_rows)
+    if clinical_rows and total_exp > 0:
+        clin_status = "PASS" if total_pres == total_exp else "WARNING"
+        clinical_metric = {
+            "value": total_pres,
+            "expected": total_exp,
+            "display": f"{total_pres}/{total_exp}",
+            "status": clin_status,
+            "description": f"{round((total_pres / total_exp) * 100, 1)}% clinical items preserved",
+        }
+    else:
+        clinical_metric = {
+            "value": None,
+            "expected": None,
+            "display": "Not measured",
+            "status": "NOT_MEASURED",
+            "description": "No clinical validation reports measured yet",
+        }
+
+    # Identity Precision
+    eval_id = [i for i in identity_rows if i["precision"] is not None]
+    if eval_id:
+        latest_id = eval_id[0]
+        false_merges = sum(int(i["false_merges"]) for i in eval_id)
+        id_metric = {
+            "value": latest_id["precision"],
+            "display": f"{latest_id['precision']:.2f}",
+            "status": "PASS" if false_merges == 0 else "FAILED",
+            "description": f"{false_merges} false merges across {len(eval_id)} evaluation(s)",
+        }
+    else:
+        id_metric = {
+            "value": None,
+            "display": "Not measured",
+            "status": "NOT_MEASURED",
+            "description": "No identity evaluations executed yet",
+        }
+
+    # Canary Leaks
+    canary_tested = [a for a in assessments if a["canary_status"] != "NOT_RUN"]
+    if canary_tested:
+        planted = sum(int(a["canary_planted"]) for a in canary_tested)
+        leaked = sum(int(a["canary_leaks"]) for a in canary_tested)
+        canary_metric = {
+            "value": leaked,
+            "planted": planted,
+            "display": f"{leaked}/{planted}",
+            "status": "PASS" if leaked == 0 else "FAILED",
+            "description": "All canary tracers contained" if leaked == 0 else "Canary leak detected!",
+        }
+    else:
+        canary_metric = {
+            "value": None,
+            "planted": 0,
+            "display": "Not tested",
+            "status": "NOT_RUN",
+            "description": "No canary test dataset executed yet",
+        }
+
+    # Overall Release Readiness
+    latest_job = jobs_rows[0] if jobs_rows else None
+    critical_risks = sum(1 for a in assessments if a["canary_leaks"] > 0 or a["reid_risk_level"] == "CRITICAL")
+    pending_jobs = sum(1 for j in jobs_rows if j["status"] in ("CREATED", "VALIDATING", "QUEUED", "PROCESSING", "PRIVACY_ANALYSIS", "CLINICAL_VALIDATION", "SECURITY_VALIDATION"))
+    verified_jobs = [j for j in jobs_rows if j["release_decision"] == "APPROVED"]
+
+    if not jobs_rows:
+        overall_readiness = "NOT_RUN"
+    elif critical_risks > 0 or (latest_job and latest_job["status"] in ("BLOCKED", "FAILED")):
+        overall_readiness = "BLOCKED"
+    elif latest_job and latest_job["status"] in ("QUARANTINED", "COMPLETED_WITH_WARNINGS"):
+        overall_readiness = "WARNING"
+    elif pending_jobs > 0:
+        overall_readiness = "WARNING"
+    else:
+        overall_readiness = "PASS"
+
+    return {
+        "metrics": {
+            "files_processed": {
+                "value": files_processed,
+                "display": str(files_processed),
+                "status": "PASS" if files_processed > 0 else "NOT_RUN",
+                "description": f"{files_sanitized} sanitised · {files_quarantined} quarantined" if files_processed > 0 else "No files processed yet",
+                "scope": f"{datasets_count} dataset(s)",
+            },
+            "records_processed": {
+                "value": records_processed,
+                "display": str(records_processed),
+                "status": "PASS" if records_processed > 0 else "NOT_RUN",
+                "description": "Total patient records processed" if records_processed > 0 else "No records processed yet",
+                "scope": "Persistent DB",
+            },
+            "pii_detected": pii_metric,
+            "clinical_preserved": clinical_metric,
+            "identity_precision": id_metric,
+            "canary_leaks": canary_metric,
+        },
+        "privacy_health": {
+            "overall_readiness": overall_readiness,
+            "latest_job_id": latest_job["id"] if latest_job else None,
+            "latest_job_status": latest_job["status"] if latest_job else "NOT_RUN",
+            "critical_unresolved_risks": critical_risks,
+            "pending_checks": pending_jobs,
+            "latest_verified_at": verified_jobs[0]["completed_at"] if verified_jobs else None,
+        },
+        "recent_jobs": jobs_rows[:10],
+        "audit_events": audit_rows,
+        "freshness": time.time(),
+    }
+
+
+@app.get("/api/dashboard")
+@app.get("/api/dashboard/overview")
+def get_dashboard_overview(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    return _compute_dashboard_payload(user)
+
+
+@app.get("/api/dashboard/metrics")
+def get_dashboard_metrics(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    return _compute_dashboard_payload(user)["metrics"]
+
+
+@app.get("/api/dashboard/recent-jobs")
+def get_dashboard_recent_jobs(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+    return _compute_dashboard_payload(user)["recent_jobs"]
+
+
+@app.get("/api/dashboard/audit-events")
+def get_dashboard_audit_events(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+    return _compute_dashboard_payload(user)["audit_events"]
+
+
+# ==============================================================================
+# 3. Organisations & Members
 # ==============================================================================
 
 
 @app.get("/api/organisations")
-def get_organisations() -> Dict[str, Any]:
+def list_organisations(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+    org_ids = _authorised_org_ids(user)
+    where_org, params = _org_filter_clause(org_ids, "id")
     with get_db() as conn:
-        orgs = [
-            dict(row)
-            for row in conn.execute(
-                "SELECT * FROM organisations ORDER BY joined_at ASC"
+        rows = conn.execute(
+            f"SELECT * FROM organisations WHERE {where_org} ORDER BY joined_at ASC", params
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+class CreateOrgBody(BaseModel):
+    name: str
+    org_type: str
+    region: str = "India"
+
+
+@app.post("/api/organisations")
+def create_organisation(
+    body: CreateOrgBody,
+    request: Request,
+    user: Dict[str, Any] = Depends(require_roles([ROLE_PLATFORM_ADMIN])),
+) -> Dict[str, Any]:
+    org_id = f"org-{secrets.token_hex(6)}"
+    now = time.time()
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO organisations (id, name, org_type, region, status, records_contributed, joined_at) VALUES (?, ?, ?, ?, 'Active', 0, ?)",
+            (org_id, body.name.strip(), body.org_type.strip(), body.region.strip(), now),
+        )
+        row = dict(conn.execute("SELECT * FROM organisations WHERE id = ?", (org_id,)).fetchone())
+    record_audit_event(
+        action="ORGANISATION_CREATED",
+        resource_type="organisation",
+        resource_id=org_id,
+        outcome="SUCCESS",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user.get("active_role"),
+        organisation_id=org_id,
+        ip_address=_client_ip(request),
+    )
+    return row
+
+
+@app.get("/api/organisations/{org_id}")
+def get_organisation(org_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    require_org_access(user, org_id)
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM organisations WHERE id = ?", (org_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Organisation not found")
+        datasets = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT id, name, format, file_count, status, created_at FROM datasets WHERE organisation_id = ? AND deleted_at IS NULL",
+                (org_id,),
             ).fetchall()
         ]
-    return {"organisations": orgs}
+    out = dict(row)
+    out["datasets"] = datasets
+    return out
 
 
-@app.get("/api/settings")
-def get_settings() -> Dict[str, Any]:
-    policy_path = STARTER_DIR / "config" / "policy.yaml"
-    policy_text = ""
-    if policy_path.exists():
-        policy_text = policy_path.read_text(encoding="utf-8")
-
-    return {
-        "policy_file": "config/policy.yaml",
-        "policy_content": policy_text,
-        "parameters": {
-            "date_shift_max_days": 180,
-            "min_group_size": 5,
-            "age_band_width": 5,
-            "quarantine_unsupported": True,
-            "pseudonym_prefix": "PSN-",
-        },
-        "secret_status": "Loaded from environment (Hidden for Security)",
-    }
-
-
-class SettingsUpdate(BaseModel):
-    date_shift_max_days: Optional[int] = 180
-    min_group_size: Optional[int] = 5
-    age_band_width: Optional[int] = 5
-
-
-@app.post("/api/settings")
-def update_settings(update: SettingsUpdate) -> Dict[str, Any]:
-    policy_path = STARTER_DIR / "config" / "policy.yaml"
-    content = (
-        f"# GuptKavach Policy Configuration\n"
-        f"date_shift_max_days: {update.date_shift_max_days}\n"
-        f"min_group_size: {update.min_group_size}\n"
-        f"age_band_width: {update.age_band_width}\n"
-    )
-    policy_path.write_text(content, encoding="utf-8")
-    return {"status": "success", "message": "Policy settings updated"}
+@app.get("/api/organisations/{org_id}/members")
+def get_organisation_members(org_id: str, user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+    require_org_access(user, org_id)
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT m.id, m.user_id, m.role, m.created_at, u.email, u.full_name, u.status
+            FROM memberships m
+            JOIN users u ON u.id = m.user_id
+            WHERE m.organisation_id = ?
+            ORDER BY m.created_at ASC
+            """,
+            (org_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ==============================================================================
-# 3. Privacy Gateway & Jobs Execution
+# 4. Datasets & Processing Jobs
 # ==============================================================================
 
 
 @app.get("/api/datasets")
-def list_datasets() -> Dict[str, Any]:
-    # Return practice dataset and any custom uploaded datasets
-    practice_files = list(DEV_INPUT.glob("*")) if DEV_INPUT.exists() else []
-    datasets = [
-        {
-            "id": "practice-dev-dataset",
-            "name": "Official Healthcare Practice Cohort (200 Files)",
-            "organisation": "Synthetic Multi-Hospital Benchmark",
-            "files_count": len(practice_files),
-            "formats": ["CSV", "JSON (FHIR R4)", "TXT (Clinical Notes)", "PDF/PNG (Quarantine Tests)"],
-            "is_default": True,
-            "description": "Standard benchmark dataset with multilingual records, honorifics, canaries and nested metadata.",
-        }
-    ]
-
-    for item in DATASETS_DIR.iterdir():
-        if item.is_dir():
-            files = list(item.glob("*"))
-            datasets.append({
-                "id": item.name,
-                "name": item.name.replace("_", " ").title(),
-                "organisation": "Local Hospital Ingestion Node",
-                "files_count": len(files),
-                "formats": list({f.suffix.upper().lstrip(".") for f in files}),
-                "is_default": False,
-                "description": f"Custom dataset staged at {item.name}",
-            })
-
-    return {"datasets": datasets}
+def list_datasets(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+    org_ids = _authorised_org_ids(user)
+    where_org, params = _org_filter_clause(org_ids, "d.organisation_id")
+    with get_db() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT d.*, o.name as organisation_name,
+                   (SELECT j.id FROM jobs j WHERE j.dataset_id = d.id ORDER BY j.created_at DESC LIMIT 1) as latest_job_id,
+                   (SELECT j.status FROM jobs j WHERE j.dataset_id = d.id ORDER BY j.created_at DESC LIMIT 1) as latest_job_status,
+                   (SELECT j.records_processed FROM jobs j WHERE j.dataset_id = d.id ORDER BY j.created_at DESC LIMIT 1) as records
+            FROM datasets d
+            JOIN organisations o ON o.id = d.organisation_id
+            WHERE d.deleted_at IS NULL AND {where_org}
+            ORDER BY d.created_at DESC
+            """,
+            params,
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
-@app.post("/api/jobs")
-async def create_job(
-    dataset_id: str = Form("practice-dev-dataset"),
-    files: Optional[List[UploadFile]] = File(None),
+@app.post("/api/datasets")
+async def upload_dataset(
+    request: Request,
+    organisation_id: Optional[str] = Form(None),
+    name: Optional[str] = Form(None),
+    description: str = Form(""),
+    auto_process: bool = Form(True),
+    sync: bool = Form(False),
+    files: List[UploadFile] = File(...),
+    user: Dict[str, Any] = Depends(require_user),
 ) -> Dict[str, Any]:
-    job_id = f"job-{int(time.time())}-{os.urandom(3).hex()}"
-    job_dir = JOBS_DIR / job_id
-    job_input = job_dir / "input"
-    job_output = job_dir / "output"
-    job_input.mkdir(parents=True, exist_ok=True)
-    job_output.mkdir(parents=True, exist_ok=True)
+    target_org = organisation_id or user.get("active_org_id")
+    if not target_org:
+        raise HTTPException(status_code=400, detail="No organisation specified")
+    require_org_access(user, target_org, [ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER])
 
-    input_source_desc = ""
+    if not files or not files[0].filename:
+        raise HTTPException(status_code=400, detail="At least one file is required")
 
-    # If custom files uploaded, save them safely preventing path traversal
-    if files and len(files) > 0 and files[0].filename:
-        input_source_desc = f"Uploaded Batch ({len(files)} files)"
-        for file in files:
-            safe_name = sanitize_filename(file.filename)
-            dest = job_input / safe_name
-            content = await file.read()
-            dest.write_bytes(content)
-    elif dataset_id == "practice-dev-dataset":
-        input_source_desc = "Official Practice Dataset (200 Files)"
-        # Copy or reference DEV_INPUT
-        job_input = DEV_INPUT
-    else:
-        custom_src = DATASETS_DIR / dataset_id
-        if custom_src.exists():
-            input_source_desc = f"Dataset: {dataset_id}"
-            job_input = custom_src
-        else:
-            job_input = DEV_INPUT
-            input_source_desc = "Default Practice Cohort"
+    dataset_id = f"ds-{int(time.time())}-{secrets.token_hex(4)}"
+    ds_dir = DATASETS_DIR / dataset_id
+    ds_dir.mkdir(parents=True, exist_ok=True)
 
-    # Execute the real Python privacy engine!
-    result = execute_engine(input_dir=job_input, output_dir=job_output)
+    total_bytes = 0
+    formats: set[str] = set()
+    hasher = hashlib.sha256()
 
-    # Record in SQLite database
+    for f in files:
+        if not f.filename:
+            continue
+        ext = Path(f.filename).suffix.lower()
+        if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"Unsupported file format: {ext or 'unknown'}")
+        safe_name = sanitize_filename(f.filename)
+        content = await f.read()
+        if len(content) == 0:
+            raise HTTPException(status_code=400, detail=f"Empty file is not allowed: {safe_name}")
+        (ds_dir / safe_name).write_bytes(content)
+        total_bytes += len(content)
+        formats.add(ext.lstrip(".").upper())
+        hasher.update(content)
+
+    ds_name = (name or "").strip() or (files[0].filename if len(files) == 1 else f"Batch ({len(files)} files)")
+    ds_sha256 = hasher.hexdigest()
+    now = time.time()
+
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO datasets (
+                id, organisation_id, name, description, format, file_count,
+                total_bytes, sha256, storage_path, status, created_by, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'VALIDATED', ?, ?)
+            """,
+            (
+                dataset_id,
+                target_org,
+                ds_name,
+                description,
+                ",".join(sorted(formats)) or "UNKNOWN",
+                len(files),
+                total_bytes,
+                ds_sha256,
+                str(ds_dir),
+                user["id"],
+                now,
+            ),
+        )
+
+    record_audit_event(
+        action="DATASET_UPLOADED",
+        resource_type="dataset",
+        resource_id=dataset_id,
+        outcome="SUCCESS",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user.get("active_role"),
+        organisation_id=target_org,
+        details=f"Uploaded {len(files)} file(s), {total_bytes} bytes",
+        ip_address=_client_ip(request),
+    )
+
+    job = None
+    if auto_process:
+        job = _create_and_start_job(
+            dataset_id=dataset_id,
+            organisation_id=target_org,
+            input_dir=ds_dir,
+            input_name=ds_name,
+            user=user,
+            sync=sync,
+            ip_address=_client_ip(request),
+        )
+
+    return {"dataset_id": dataset_id, "job": job}
+
+
+@app.get("/api/datasets/{dataset_id}")
+def get_dataset(dataset_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM datasets WHERE id = ? AND deleted_at IS NULL", (dataset_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        ds = dict(row)
+        require_org_access(user, ds["organisation_id"])
+        jobs = [
+            dict(j)
+            for j in conn.execute(
+                "SELECT * FROM jobs WHERE dataset_id = ? ORDER BY created_at DESC", (dataset_id,)
+            ).fetchall()
+        ]
+    ds["jobs"] = jobs
+    return ds
+
+
+@app.delete("/api/datasets/{dataset_id}")
+def delete_dataset(
+    dataset_id: str, request: Request, user: Dict[str, Any] = Depends(require_user)
+) -> Dict[str, str]:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM datasets WHERE id = ? AND deleted_at IS NULL", (dataset_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        require_org_access(user, row["organisation_id"], [ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER])
+        conn.execute("UPDATE datasets SET deleted_at = ?, status = 'DELETED' WHERE id = ?", (time.time(), dataset_id))
+    record_audit_event(
+        action="DATASET_DELETED",
+        resource_type="dataset",
+        resource_id=dataset_id,
+        outcome="SUCCESS",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user.get("active_role"),
+        organisation_id=row["organisation_id"],
+        ip_address=_client_ip(request),
+    )
+    return {"status": "deleted"}
+
+
+def _create_and_start_job(
+    *,
+    dataset_id: str,
+    organisation_id: str,
+    input_dir: Path,
+    input_name: str,
+    user: Dict[str, Any],
+    sync: bool = False,
+    idempotency_key: Optional[str] = None,
+    ip_address: Optional[str] = None,
+) -> Dict[str, Any]:
+    if idempotency_key:
+        with get_db() as conn:
+            existing = conn.execute(
+                "SELECT * FROM jobs WHERE idempotency_key = ? AND organisation_id = ?",
+                (idempotency_key, organisation_id),
+            ).fetchone()
+            if existing:
+                return dict(existing)
+
+    job_id = f"job-{int(time.time())}-{secrets.token_hex(4)}"
+    now = time.time()
     with get_db() as conn:
         conn.execute(
             """
             INSERT INTO jobs (
-                id, created_at, status, input_name, files_total, files_sanitized,
-                files_quarantined, records_processed, records_linked, identifiers_detected,
-                duration_secs, policy_version, error_msg
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, created_at, status, current_stage, input_name, dataset_id,
+                organisation_id, created_by, release_decision, policy_version, idempotency_key
+            ) VALUES (?, ?, 'CREATED', 'CREATED', ?, ?, ?, ?, 'PENDING', '2.0-deterministic', ?)
             """,
-            (
-                job_id,
-                time.time(),
-                "Completed" if result["success"] else "Failed",
-                input_source_desc,
-                result["files_total"],
-                result["files_sanitized"],
-                result["files_quarantined"],
-                result["records_processed"],
-                result["records_linked"],
-                result["identifiers_detected"],
-                result["duration_secs"],
-                "1.0-deterministic",
-                result["stderr"] if not result["success"] else None,
-            ),
+            (job_id, now, input_name, dataset_id, organisation_id, user["id"], idempotency_key),
         )
         conn.execute(
-            """
-            INSERT INTO audit_logs (
-                timestamp, event_type, job_id, description, file_hash, policy_version, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                time.time(),
-                "JOB_EXECUTION",
-                job_id,
-                f"GuptKavach engine processed {result['files_total']} files ({result['files_sanitized']} sanitized, {result['files_quarantined']} quarantined).",
-                compute_file_sha256(job_output / "report.json") if (job_output / "report.json").exists() else "N/A",
-                "1.0",
-                "COMPLETED" if result["success"] else "FAILED",
-            ),
+            "INSERT INTO job_events (job_id, stage, status, message, created_at) VALUES (?, 'CREATED', 'CREATED', 'Processing job created.', ?)",
+            (job_id, now),
         )
 
-    return {
+    record_audit_event(
+        action="JOB_CREATED",
+        resource_type="job",
+        resource_id=job_id,
+        outcome="SUCCESS",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user.get("active_role"),
+        organisation_id=organisation_id,
+        details=f"Created processing job for dataset {dataset_id}",
+        ip_address=ip_address,
+    )
+
+    kwargs = {
         "job_id": job_id,
-        "status": "Completed" if result["success"] else "Failed",
-        "result": result,
+        "dataset_id": dataset_id,
+        "organisation_id": organisation_id,
+        "input_dir": input_dir,
+        "actor_id": user["id"],
+        "actor_email": user["email"],
+        "actor_role": user.get("active_role"),
     }
+    if sync:
+        execute_job_pipeline(**kwargs)
+    else:
+        launch_job_async(**kwargs)
+
+    with get_db() as conn:
+        return dict(conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone())
+
+
+class CreateJobBody(BaseModel):
+    dataset_id: str
+    sync: bool = False
+    idempotency_key: Optional[str] = None
+
+
+@app.post("/api/jobs")
+async def create_job(
+    request: Request,
+    user: Dict[str, Any] = Depends(require_user),
+    dataset_id: Optional[str] = Form(None),
+    organisation_id: Optional[str] = Form(None),
+    sync: bool = Form(False),
+    files: Optional[List[UploadFile]] = File(None),
+) -> Dict[str, Any]:
+    # Support both JSON body (for existing dataset_id) and multipart upload
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        body = await request.json()
+        ds_id = body.get("dataset_id")
+        sync_flag = bool(body.get("sync", False))
+        idem_key = body.get("idempotency_key")
+        if not ds_id:
+            raise HTTPException(status_code=400, detail="dataset_id is required")
+        with get_db() as conn:
+            ds = conn.execute(
+                "SELECT * FROM datasets WHERE id = ? AND deleted_at IS NULL", (ds_id,)
+            ).fetchone()
+            if not ds:
+                raise HTTPException(status_code=404, detail="Dataset not found")
+        require_org_access(user, ds["organisation_id"], [ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER])
+        return _create_and_start_job(
+            dataset_id=ds["id"],
+            organisation_id=ds["organisation_id"],
+            input_dir=Path(ds["storage_path"]),
+            input_name=ds["name"],
+            user=user,
+            sync=sync_flag,
+            idempotency_key=idem_key,
+            ip_address=_client_ip(request),
+        )
+
+    # Multipart upload fallback (compatible with Datasets page upload)
+    if files and len(files) > 0 and files[0].filename:
+        res = await upload_dataset(
+            request=request,
+            organisation_id=organisation_id,
+            name=None,
+            description="",
+            auto_process=True,
+            sync=sync,
+            files=files,
+            user=user,
+        )
+        return res["job"]
+
+    if dataset_id:
+        with get_db() as conn:
+            ds = conn.execute(
+                "SELECT * FROM datasets WHERE id = ? AND deleted_at IS NULL", (dataset_id,)
+            ).fetchone()
+            if not ds:
+                raise HTTPException(status_code=404, detail="Dataset not found")
+        require_org_access(user, ds["organisation_id"], [ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER])
+        return _create_and_start_job(
+            dataset_id=ds["id"],
+            organisation_id=ds["organisation_id"],
+            input_dir=Path(ds["storage_path"]),
+            input_name=ds["name"],
+            user=user,
+            sync=sync,
+            ip_address=_client_ip(request),
+        )
+
+    raise HTTPException(status_code=400, detail="Provide files or a valid dataset_id")
+
+
+@app.get("/api/jobs")
+def list_jobs(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+    org_ids = _authorised_org_ids(user)
+    where_org, params = _org_filter_clause(org_ids, "j.organisation_id")
+    with get_db() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT j.*, d.name as dataset_name, o.name as organisation_name
+            FROM jobs j
+            LEFT JOIN datasets d ON d.id = j.dataset_id
+            LEFT JOIN organisations o ON o.id = j.organisation_id
+            WHERE {where_org}
+            ORDER BY j.created_at DESC
+            """,
+            params,
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 @app.get("/api/jobs/{job_id}")
-def get_job(job_id: str) -> Dict[str, Any]:
+def get_job_detail(job_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Job not found")
         job = dict(row)
+        if job.get("organisation_id"):
+            require_org_access(user, job["organisation_id"])
+        events = [
+            dict(e)
+            for e in conn.execute(
+                "SELECT * FROM job_events WHERE job_id = ? ORDER BY id ASC", (job_id,)
+            ).fetchall()
+        ]
+    job["events"] = events
+    return job
 
-    job_output = JOBS_DIR / job_id / "output"
-    report_file = job_output / "report.json"
-    files_report = []
-    if report_file.exists():
-        try:
-            report_data = json.loads(report_file.read_text(encoding="utf-8"))
-            files_report = report_data.get("files", [])
-        except Exception:
-            pass
 
-    job["files_report"] = files_report
-    return {"job": job}
+@app.get("/api/jobs/{job_id}/events")
+def get_job_events(job_id: str, user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+    job = get_job_detail(job_id, user)
+    return job["events"]
+
+
+@app.get("/api/jobs/{job_id}/results")
+def get_job_results(job_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    job = get_job_detail(job_id, user)
+    with get_db() as conn:
+        privacy = conn.execute("SELECT * FROM privacy_assessments WHERE job_id = ?", (job_id,)).fetchone()
+        clinical = conn.execute("SELECT * FROM clinical_reports WHERE job_id = ?", (job_id,)).fetchone()
+        identity = conn.execute("SELECT * FROM identity_clusters WHERE job_id = ?", (job_id,)).fetchone()
+        passport = conn.execute("SELECT * FROM passports WHERE job_id = ?", (job_id,)).fetchone()
+    return {
+        "job": job,
+        "privacy_assessment": dict(privacy) if privacy else None,
+        "clinical_report": dict(clinical) if clinical else None,
+        "identity_cluster": dict(identity) if identity else None,
+        "passport": dict(passport) if passport else None,
+    }
 
 
 @app.get("/api/jobs/{job_id}/download")
-def download_job_outputs(job_id: str):
-    """Safely zips and returns valid sanitized outputs for the job."""
+def download_job_outputs(job_id: str, user: Dict[str, Any] = Depends(require_user)):
+    job = get_job_detail(job_id, user)
+    if job.get("organisation_id"):
+        require_org_access(user, job["organisation_id"])
     job_output = JOBS_DIR / job_id / "output"
-    if not job_output.exists():
-        # Fallback to test_output if default demo run
-        job_output = DEFAULT_OUTPUT
-
     sanitized_dir = job_output / "sanitized"
     if not sanitized_dir.exists():
-        raise HTTPException(status_code=404, detail="Sanitized output directory not found")
+        raise HTTPException(status_code=404, detail="Sanitized output not found for this job")
 
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -338,7 +1028,6 @@ def download_job_outputs(job_id: str):
                 file_path = Path(root) / f
                 arcname = file_path.relative_to(sanitized_dir)
                 zf.write(file_path, f"sanitized/{arcname}")
-        
         if (job_output / "report.json").exists():
             zf.write(job_output / "report.json", "report.json")
         if (job_output / "records.jsonl").exists():
@@ -348,203 +1037,517 @@ def download_job_outputs(job_id: str):
     return StreamingResponse(
         zip_buffer,
         media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename=GuptKavach_Protected_{job_id}.zip"},
+        headers={"Content-Disposition": f"attachment; filename=MediLocker_Protected_{job_id}.zip"},
     )
 
 
 # ==============================================================================
-# 4. Identity Graph & Threat Lab & Intelligence
+# 5. Privacy, Identity, Clinical, Attack Simulator & Passports
 # ==============================================================================
 
 
-@app.get("/api/identity-graph")
-def get_identity_graph(job_id: Optional[str] = None) -> Dict[str, Any]:
-    target_dir = None
-    if job_id:
-        custom_out = JOBS_DIR / job_id / "output"
-        if custom_out.exists():
-            target_dir = custom_out
+@app.get("/api/privacy/assessments")
+def list_privacy_assessments(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+    org_ids = _authorised_org_ids(user)
+    where_org, params = _org_filter_clause(org_ids, "organisation_id")
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM privacy_assessments WHERE {where_org} ORDER BY created_at DESC", params
+        ).fetchall()
+    return [dict(r) for r in rows]
 
-    return parse_identity_continuity_graph(target_dir)
 
-
-@app.get("/api/threat-lab")
-def get_threat_lab() -> Dict[str, Any]:
-    metrics = get_actual_dev_metrics()
-    return {
-        "canary_validation": {
-            "status": "PASS (Zero Leaks)",
-            "planted": metrics["canaries_planted"],
-            "detected_and_defused": metrics["canaries_planted"],
-            "leaked_into_outputs": metrics["canaries_leaked"],
-            "penalty_score": 0,
-            "description": "Adversarial canaries deliberately planted in synthetic records were 100% neutralized.",
-        },
-        "multilingual_adversarial_breakdown": metrics["leakage_by_language"],
-        "channel_leakage_vectors": metrics["leakage_by_channel"],
-        "pii_detection_rules": metrics["identifier_breakdown"],
-        "fhir_integrity": {
-            "status": "VALID",
-            "schema": "HL7 FHIR R4 Bundle",
-            "resource_preservation": "100%",
-            "non_person_entities_retained": ["Organization", "Location", "Practitioner", "Medication"],
-        },
-        "quarantine_handling": {
-            "raw_binary_isolation": "Strict Quarantine",
-            "unsupported_formats": ["PDF", "PNG", "XML", "Corrupted JSON"],
-            "raw_leak_cost": 0,
-        },
-    }
+@app.get("/api/privacy/assessments/{assessment_id}")
+def get_privacy_assessment(assessment_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM privacy_assessments WHERE id = ?", (assessment_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Assessment not found")
+        if row["organisation_id"]:
+            require_org_access(user, row["organisation_id"])
+    return dict(row)
 
 
 @app.get("/api/privacy-intelligence")
-def get_privacy_intelligence() -> Dict[str, Any]:
-    metrics = get_actual_dev_metrics()
+def get_privacy_intelligence(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    assessments = list_privacy_assessments(user)
+    if not assessments:
+        return {
+            "status": "NOT_MEASURED",
+            "assessments_count": 0,
+            "total_pii_detected": 0,
+            "total_residual_leakage": 0,
+            "canary_status": "NOT_RUN",
+            "reid_risk_level": "NOT_MEASURED",
+            "assessments": [],
+        }
+    latest = assessments[0]
     return {
-        "core_metrics": {
-            "pii_leakage_rate": f"{metrics['personal_data_leakage_rate']}%",
-            "pii_protection_rate": f"{metrics['personal_data_protected_rate']}%",
-            "medical_preservation_rate": f"{metrics['medical_preservation_rate']}%",
-            "linking_precision": metrics["linking_precision"],
-            "linking_recall": metrics["linking_recall"],
-            "linking_f0_5": metrics["linking_f0_5"],
-            "false_merges": metrics["false_merges"],
-            "execution_speed": f"{metrics['processing_speed_fps']} records/sec",
-        },
-        "tradeoff_analysis": {
-            "date_shift_window": "±180 Days (HMAC Keyed per Patient)",
-            "age_generalization": "5-Year Age Bands",
-            "quasi_identifier_k_anonymity": "k >= 5",
-            "re_identification_risk": "< 0.05% under auxiliary linkage attack",
-        },
-        "before_after_samples": [
-            {
-                "channel": "Free Text Clinical Note",
-                "before": "Patient Rajesh Kumar Sharma (Aadhaar: 4921-8201-9923, Phone: 9823412345) admitted to Ward 4 with acute bacterial bronchitis. Prescribed Azithromycin 500mg OD.",
-                "after": "Patient: PSN-3a8f1b\nPatient [PATIENT_NAME] (Aadhaar: [AADHAAR], Phone: [PHONE]) admitted to Ward 4 with acute bacterial bronchitis. Prescribed Azithromycin 500mg OD.",
-                "medical_kept": "acute bacterial bronchitis, Azithromycin 500mg OD",
-                "identifiers_redacted": ["Rajesh Kumar Sharma", "4921-8201-9923", "9823412345"],
-            },
-            {
-                "channel": "FHIR JSON Resource",
-                "before": "{\"resourceType\": \"Patient\", \"name\": [{\"family\": \"Verma\", \"given\": [\"Amit\"]}], \"birthDate\": \"1984-06-12\", \"address\": [{\"district\": \"Jaipur\", \"postalCode\": \"302001\"}]}",
-                "after": "{\"resourceType\": \"Patient\", \"id\": \"PSN-7b192e\", \"birthDate\": \"1984\", \"age_band\": \"40-44\", \"address\": [{\"district\": \"Jaipur\"}]}",
-                "medical_kept": "Age band (40-44), District (Jaipur)",
-                "identifiers_redacted": ["Amit Verma", "Exact DOB (1984-06-12)", "PostalCode (302001)"],
-            },
-            {
-                "channel": "Multilingual Record (Hindi/Devanagari)",
-                "before": "रोगी का नाम: सुनीता देवी, पता: ग्राम रामपुर, जिला वाराणसी। रक्त शर्करा: 180 mg/dL।",
-                "after": "रोगी का नाम: [PATIENT_NAME], पता: ग्राम [VILLAGE], जिला वाराणसी। रक्त शर्करा: 180 mg/dL।",
-                "medical_kept": "रक्त शर्करा: 180 mg/dL",
-                "identifiers_redacted": ["सुनीता देवी", "रामपुर"],
-            },
-        ],
+        "status": "MEASURED",
+        "assessments_count": len(assessments),
+        "total_pii_detected": sum(int(a["pii_detected"]) for a in assessments),
+        "total_residual_leakage": sum(int(a["residual_leakage"]) for a in assessments),
+        "canary_status": latest["canary_status"],
+        "reid_risk_level": latest["reid_risk_level"],
+        "assessments": assessments,
     }
 
 
+@app.get("/api/identity/clusters")
+@app.get("/api/identity-graph")
+def list_identity_clusters(
+    job_id: Optional[str] = None, user: Dict[str, Any] = Depends(require_user)
+) -> Dict[str, Any]:
+    org_ids = _authorised_org_ids(user)
+    where_org, params = _org_filter_clause(org_ids, "organisation_id")
+    with get_db() as conn:
+        if job_id:
+            row = conn.execute(
+                f"SELECT * FROM identity_clusters WHERE job_id = ? AND {where_org}",
+                [job_id] + params,
+            ).fetchone()
+        else:
+            row = conn.execute(
+                f"SELECT * FROM identity_clusters WHERE {where_org} ORDER BY created_at DESC LIMIT 1",
+                params,
+            ).fetchone()
+
+    if not row:
+        return {
+            "status": "NOT_MEASURED",
+            "nodes": [],
+            "edges": [],
+            "total_patients": 0,
+            "cross_hospital_links": 0,
+            "precision": None,
+            "recall": None,
+            "f05": None,
+            "false_merges": 0,
+            "abstentions": 0,
+            "conflicts": 0,
+        }
+
+    data = dict(row)
+    graph = json.loads(data.get("graph_json") or "{}")
+    return {
+        "status": "MEASURED",
+        "id": data["id"],
+        "job_id": data["job_id"],
+        "nodes": graph.get("nodes", []),
+        "edges": graph.get("edges", []),
+        "clusters": graph.get("clusters", []),
+        "total_patients": data["total_patients"],
+        "cross_hospital_links": data["cross_hospital_links"],
+        "precision": data["precision"],
+        "recall": data["recall"],
+        "f05": data["f05"],
+        "false_merges": data["false_merges"],
+        "abstentions": data["abstentions"],
+        "conflicts": data["conflicts"],
+    }
+
+
+@app.get("/api/clinical/reports")
+def list_clinical_reports(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+    org_ids = _authorised_org_ids(user)
+    where_org, params = _org_filter_clause(org_ids, "organisation_id")
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM clinical_reports WHERE {where_org} ORDER BY created_at DESC", params
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/clinical/reports/{report_id}")
+def get_clinical_report(report_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM clinical_reports WHERE id = ?", (report_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Clinical report not found")
+        if row["organisation_id"]:
+            require_org_access(user, row["organisation_id"])
+    return dict(row)
+
+
+@app.get("/api/threat-lab")
+def get_threat_lab(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    org_ids = _authorised_org_ids(user)
+    where_org, params = _org_filter_clause(org_ids, "organisation_id")
+    with get_db() as conn:
+        runs = [
+            dict(r)
+            for r in conn.execute(
+                f"SELECT * FROM attack_runs WHERE {where_org} ORDER BY created_at DESC LIMIT 20", params
+            ).fetchall()
+        ]
+    if not runs:
+        return {
+            "status": "NOT_RUN",
+            "risk_score": None,
+            "attack_simulations": [],
+            "history": [],
+        }
+    latest = runs[0]
+    parsed = json.loads(latest.get("results_json") or "{}")
+    return {
+        "status": "MEASURED",
+        "risk_score": latest["risk_score"],
+        "attack_simulations": parsed.get("strategies", []),
+        "history": runs,
+    }
+
+
+class AttackRunBody(BaseModel):
+    job_id: str
+    profile: str = "standard-7-vector"
+
+
+@app.post("/api/attack-simulator/run")
+def run_attack_simulator(
+    body: AttackRunBody, request: Request, user: Dict[str, Any] = Depends(require_user)
+) -> Dict[str, Any]:
+    job = get_job_detail(body.job_id, user)
+    if job.get("organisation_id"):
+        require_org_access(user, job["organisation_id"], [ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER])
+    res = run_attack_simulation_for_job(
+        job_id=job["id"],
+        dataset_id=job.get("dataset_id"),
+        organisation_id=job.get("organisation_id"),
+        profile=body.profile,
+        actor_id=user["id"],
+    )
+    record_audit_event(
+        action="ATTACK_SIMULATION_RUN",
+        resource_type="attack_run",
+        resource_id=res["id"],
+        outcome="SUCCESS",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user.get("active_role"),
+        organisation_id=job.get("organisation_id"),
+        details=f"Executed profile {body.profile} on job {job['id']}",
+        ip_address=_client_ip(request),
+    )
+    return res
+
+
+@app.get("/api/passports")
+def list_passports(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+    org_ids = _authorised_org_ids(user)
+    where_org, params = _org_filter_clause(org_ids, "p.organisation_id")
+    with get_db() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT p.*, d.name as dataset_name, o.name as organisation_name
+            FROM passports p
+            LEFT JOIN datasets d ON d.id = p.dataset_id
+            LEFT JOIN organisations o ON o.id = p.organisation_id
+            WHERE {where_org}
+            ORDER BY p.created_at DESC
+            """,
+            params,
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/passports/{passport_id}")
+def get_passport(passport_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM passports WHERE id = ?", (passport_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Privacy Passport not found")
+        if row["organisation_id"]:
+            require_org_access(user, row["organisation_id"])
+    data = dict(row)
+    data["payload"] = json.loads(data["passport_json"])
+    return data
+
+
+@app.post("/api/passports/{passport_id}/verify")
+def verify_passport(
+    passport_id: str, request: Request, user: Dict[str, Any] = Depends(require_user)
+) -> Dict[str, Any]:
+    data = get_passport(passport_id, user)
+    recomputed = hashlib.sha256(
+        json.dumps(data["payload"], sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    integrity_ok = recomputed == data["manifest_hash"]
+    now = time.time()
+    if integrity_ok:
+        with get_db() as conn:
+            conn.execute("UPDATE passports SET verified_at = ? WHERE id = ?", (now, passport_id))
+    record_audit_event(
+        action="PASSPORT_VERIFIED",
+        resource_type="passport",
+        resource_id=passport_id,
+        outcome="SUCCESS" if integrity_ok else "FAILED",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user.get("active_role"),
+        organisation_id=data.get("organisation_id"),
+        ip_address=_client_ip(request),
+    )
+    return {
+        "passport_id": passport_id,
+        "integrity_valid": integrity_ok,
+        "signature_status": data["signature_status"],
+        "manifest_hash": data["manifest_hash"],
+        "verified_at": now if integrity_ok else None,
+    }
+
+
+@app.get("/api/passports/{passport_id}/download")
+def download_passport(
+    passport_id: str,
+    format: str = Query("json", pattern="^(json|html)$"),
+    user: Dict[str, Any] = Depends(require_user),
+):
+    data = get_passport(passport_id, user)
+    if format == "json":
+        return Response(
+            content=json.dumps(
+                {
+                    "passport_id": data["id"],
+                    "signature_status": data["signature_status"],
+                    "manifest_hash": data["manifest_hash"],
+                    "payload": data["payload"],
+                },
+                indent=2,
+            ),
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename=PrivacyPassport_{passport_id}.json"},
+        )
+    metrics = data["payload"].get("metrics", {})
+    report_html = f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>MediLocker Privacy Passport {html.escape(passport_id)}</title>
+<style>body{{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;color:#050505}}
+.box{{border:1px solid #dcdcdc;border-radius:8px;padding:20px;margin-top:16px}}</style></head>
+<body>
+<h1>MediLocker Privacy Passport</h1>
+<p><strong>Passport ID:</strong> {html.escape(passport_id)}</p>
+<p><strong>Signature Status:</strong> {html.escape(data['signature_status'])} (Hash-Verified Manifest)</p>
+<p><strong>Manifest SHA-256:</strong> <code>{html.escape(data['manifest_hash'])}</code></p>
+<p><strong>Release Decision:</strong> {html.escape(str(data['payload'].get('release_decision', '')))}</p>
+<div class="box"><h3>Measured Metrics</h3>
+<pre>{html.escape(json.dumps(metrics, indent=2))}</pre></div>
+</body></html>"""
+    return HTMLResponse(
+        content=report_html,
+        headers={"Content-Disposition": f"attachment; filename=PrivacyPassport_{passport_id}.html"},
+    )
+
+
 # ==============================================================================
-# 5. Research Collaboration & Trust / Audit
+# 6. Research Collaboration, Audit Trail & Settings
 # ==============================================================================
 
 
 @app.get("/api/research/requests")
-def list_research_requests() -> Dict[str, Any]:
+def list_research_requests(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
     with get_db() as conn:
-        requests = [
-            dict(row)
-            for row in conn.execute(
-                "SELECT * FROM research_requests ORDER BY created_at DESC"
-            ).fetchall()
+        rows = [
+            dict(r)
+            for r in conn.execute("SELECT * FROM research_requests ORDER BY created_at DESC").fetchall()
         ]
-        for r in requests:
-            try:
-                r["target_orgs"] = json.loads(r["target_orgs"])
-                r["datasets_requested"] = json.loads(r["datasets_requested"])
-            except Exception:
-                pass
-    return {"requests": requests}
+    return rows
 
 
-class NewResearchRequest(BaseModel):
+class NewResearchBody(BaseModel):
     title: str
-    requestor_org: str
-    target_orgs: List[str]
-    purpose: str
-    datasets_requested: List[str]
+    institution: str
+    purpose: str = ""
+    dataset_id: Optional[str] = None
 
 
 @app.post("/api/research/requests")
-def create_research_request(req: NewResearchRequest) -> Dict[str, Any]:
-    req_id = f"req-{int(time.time())}"
+def create_research_request(
+    body: NewResearchBody,
+    request: Request,
+    user: Dict[str, Any] = Depends(
+        require_roles([ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER, ROLE_RESEARCHER])
+    ),
+) -> Dict[str, Any]:
+    req_id = f"req-{int(time.time())}-{secrets.token_hex(3)}"
+    now = time.time()
     with get_db() as conn:
         conn.execute(
             """
             INSERT INTO research_requests (
-                id, title, requestor_org, target_orgs, purpose, status, created_at, datasets_requested, release_simulated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, title, requestor_org, target_orgs, purpose, status, created_at,
+                datasets_requested, release_simulated, organisation_id, dataset_id, created_by
+            ) VALUES (?, ?, ?, ?, ?, 'SUBMITTED', ?, ?, 0, ?, ?, ?)
             """,
             (
                 req_id,
-                req.title,
-                req.requestor_org,
-                json.dumps(req.target_orgs),
-                req.purpose,
-                "Pending",
-                time.time(),
-                json.dumps(req.datasets_requested),
-                0,
+                body.title.strip(),
+                body.institution.strip(),
+                json.dumps([user.get("active_org_id") or ""]),
+                body.purpose.strip(),
+                now,
+                json.dumps([body.dataset_id] if body.dataset_id else []),
+                user.get("active_org_id"),
+                body.dataset_id,
+                user["id"],
             ),
         )
-    return {"status": "success", "request_id": req_id}
+        row = dict(conn.execute("SELECT * FROM research_requests WHERE id = ?", (req_id,)).fetchone())
+    record_audit_event(
+        action="RESEARCH_REQUEST_SUBMITTED",
+        resource_type="research_request",
+        resource_id=req_id,
+        outcome="SUCCESS",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user.get("active_role"),
+        organisation_id=user.get("active_org_id"),
+        ip_address=_client_ip(request),
+    )
+    return row
 
 
 @app.post("/api/research/requests/{req_id}/approve")
-def approve_request(req_id: str) -> Dict[str, Any]:
+def approve_research_request(
+    req_id: str,
+    request: Request,
+    user: Dict[str, Any] = Depends(require_roles([ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER])),
+) -> Dict[str, str]:
     with get_db() as conn:
+        row = conn.execute("SELECT * FROM research_requests WHERE id = ?", (req_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Research request not found")
         conn.execute(
-            "UPDATE research_requests SET status = 'Approved', release_simulated = 1 WHERE id = ?",
-            (req_id,),
+            "UPDATE research_requests SET status = 'APPROVED', reviewed_by = ?, reviewed_at = ? WHERE id = ?",
+            (user["id"], time.time(), req_id),
         )
-        conn.execute(
-            """
-            INSERT INTO audit_logs (timestamp, event_type, job_id, description, file_hash, policy_version, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                time.time(),
-                "COLLABORATION_RELEASE",
-                req_id,
-                f"Consortium consensus established. Simulated release of protected multi-hospital dataset for {req_id}.",
-                "SHA256:PROTECTED_CONSORTIUM_BUNDLE",
-                "1.0",
-                "RELEASE_AUTHORIZED",
-            ),
-        )
-    return {"status": "success", "message": f"Request {req_id} approved"}
+    record_audit_event(
+        action="RESEARCH_REQUEST_APPROVED",
+        resource_type="research_request",
+        resource_id=req_id,
+        outcome="APPROVED",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user.get("active_role"),
+        organisation_id=row["organisation_id"],
+        ip_address=_client_ip(request),
+    )
+    return {"status": "APPROVED"}
 
 
 @app.post("/api/research/requests/{req_id}/reject")
-def reject_request(req_id: str) -> Dict[str, Any]:
+def reject_research_request(
+    req_id: str,
+    request: Request,
+    user: Dict[str, Any] = Depends(require_roles([ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER])),
+) -> Dict[str, str]:
     with get_db() as conn:
+        row = conn.execute("SELECT * FROM research_requests WHERE id = ?", (req_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Research request not found")
         conn.execute(
-            "UPDATE research_requests SET status = 'Rejected' WHERE id = ?",
-            (req_id,),
+            "UPDATE research_requests SET status = 'REJECTED', reviewed_by = ?, reviewed_at = ? WHERE id = ?",
+            (user["id"], time.time(), req_id),
         )
-    return {"status": "success", "message": f"Request {req_id} rejected"}
+    record_audit_event(
+        action="RESEARCH_REQUEST_REJECTED",
+        resource_type="research_request",
+        resource_id=req_id,
+        outcome="REJECTED",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user.get("active_role"),
+        organisation_id=row["organisation_id"],
+        ip_address=_client_ip(request),
+    )
+    return {"status": "REJECTED"}
 
 
+@app.get("/api/audit/events")
 @app.get("/api/audit")
-def get_audit_trail() -> Dict[str, Any]:
+def list_audit_events(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    action: Optional[str] = None,
+    user: Dict[str, Any] = Depends(require_user),
+) -> Dict[str, Any]:
+    org_ids = _authorised_org_ids(user)
+    where_org, params = _org_filter_clause(org_ids, "organisation_id")
+    clauses = [f"({where_org} OR organisation_id IS NULL)"]
+    if action:
+        clauses.append("action = ?")
+        params.append(action)
+    where_sql = " AND ".join(clauses)
+    offset = (page - 1) * page_size
+
     with get_db() as conn:
-        logs = [
-            dict(row)
-            for row in conn.execute(
-                "SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 50"
+        total = conn.execute(
+            f"SELECT COUNT(*) as c FROM audit_events WHERE {where_sql}", params
+        ).fetchone()["c"]
+        rows = [
+            dict(r)
+            for r in conn.execute(
+                f"SELECT * FROM audit_events WHERE {where_sql} ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+                params + [page_size, offset],
             ).fetchall()
         ]
+    return {"events": rows, "total": total, "page": page, "page_size": page_size}
+
+
+@app.get("/api/settings")
+def get_settings(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    smtp = get_smtp_config()
+    google = get_google_config()
+    with get_db() as conn:
+        saved = {
+            r["key"]: r["value"]
+            for r in conn.execute("SELECT key, value FROM settings").fetchall()
+        }
     return {
-        "audit_logs": logs,
-        "tamper_proof_seal": "HMAC-SHA256 Deterministic Ledger",
-        "confidentiality_guarantee": "Zero raw PII and Zero secrets in logs",
+        "user": {k: v for k, v in user.items() if k != "raw_token"},
+        "smtp_configured": smtp["configured"],
+        "google_configured": google["configured"],
+        "raksha_secret_set": bool(os.environ.get("RAKSHA_SECRET")),
+        "output_format": saved.get("output_format", "sanitized+report+records"),
+        "quarantine_threshold": float(saved.get("quarantine_threshold", "0.5")),
+        "multilingual_enabled": saved.get("multilingual_enabled", "true") == "true",
     }
+
+
+class SettingsUpdateBody(BaseModel):
+    output_format: Optional[str] = None
+    quarantine_threshold: Optional[float] = None
+    multilingual_enabled: Optional[bool] = None
+
+
+@app.post("/api/settings")
+def update_settings(
+    body: SettingsUpdateBody,
+    request: Request,
+    user: Dict[str, Any] = Depends(require_roles([ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER])),
+) -> Dict[str, Any]:
+    with get_db() as conn:
+        if body.output_format is not None:
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('output_format', ?)",
+                (body.output_format,),
+            )
+        if body.quarantine_threshold is not None:
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('quarantine_threshold', ?)",
+                (str(body.quarantine_threshold),),
+            )
+        if body.multilingual_enabled is not None:
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('multilingual_enabled', ?)",
+                ("true" if body.multilingual_enabled else "false",),
+            )
+    record_audit_event(
+        action="SETTINGS_UPDATED",
+        resource_type="settings",
+        outcome="SUCCESS",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user.get("active_role"),
+        organisation_id=user.get("active_org_id"),
+        ip_address=_client_ip(request),
+    )
+    return get_settings(user)

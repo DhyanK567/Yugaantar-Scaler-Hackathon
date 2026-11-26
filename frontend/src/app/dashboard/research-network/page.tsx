@@ -12,10 +12,7 @@ export default function ResearchNetworkPage() {
   const [error, setError] = useState("");
 
   function load() {
-    api
-      .researchRequests()
-      .then(setRequests)
-      .catch((e) => setError(e.message));
+    api.researchRequests().then(setRequests).catch((e) => setError(e.message));
   }
 
   useEffect(() => {
@@ -40,6 +37,7 @@ export default function ResearchNetworkPage() {
   }
 
   async function handleAction(id: string, action: "approve" | "reject") {
+    setError("");
     try {
       if (action === "approve") await api.approveResearch(id);
       else await api.rejectResearch(id);
@@ -56,7 +54,7 @@ export default function ResearchNetworkPage() {
           Research Network
         </h1>
         <p style={{ fontSize: 13.5, color: "#777777" }}>
-          Governed data-access requests from external research institutions.
+          Governed data-access requests for sanitised outputs. Raw patient-level data is never exposed.
         </p>
       </div>
 
@@ -80,7 +78,6 @@ export default function ResearchNetworkPage() {
         </div>
       )}
 
-      {/* New request form */}
       <form
         onSubmit={handleCreate}
         style={{
@@ -104,14 +101,7 @@ export default function ResearchNetworkPage() {
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Cardiology Cohort 2026"
               required
-              style={{
-                width: "100%",
-                padding: "9px 12px",
-                border: "1.5px solid #DCDCDC",
-                borderRadius: 7,
-                fontSize: 13.5,
-                background: "#FAFAFA",
-              }}
+              style={{ width: "100%", padding: "9px 12px", border: "1.5px solid #DCDCDC", borderRadius: 7, fontSize: 13.5, background: "#FAFAFA" }}
             />
           </div>
           <div>
@@ -123,14 +113,7 @@ export default function ResearchNetworkPage() {
               onChange={(e) => setInstitution(e.target.value)}
               placeholder="AIIMS Research"
               required
-              style={{
-                width: "100%",
-                padding: "9px 12px",
-                border: "1.5px solid #DCDCDC",
-                borderRadius: 7,
-                fontSize: 13.5,
-                background: "#FAFAFA",
-              }}
+              style={{ width: "100%", padding: "9px 12px", border: "1.5px solid #DCDCDC", borderRadius: 7, fontSize: 13.5, background: "#FAFAFA" }}
             />
           </div>
           <div>
@@ -141,14 +124,7 @@ export default function ResearchNetworkPage() {
               value={purpose}
               onChange={(e) => setPurpose(e.target.value)}
               placeholder="Longitudinal HbA1c outcome analysis"
-              style={{
-                width: "100%",
-                padding: "9px 12px",
-                border: "1.5px solid #DCDCDC",
-                borderRadius: 7,
-                fontSize: 13.5,
-                background: "#FAFAFA",
-              }}
+              style={{ width: "100%", padding: "9px 12px", border: "1.5px solid #DCDCDC", borderRadius: 7, fontSize: 13.5, background: "#FAFAFA" }}
             />
           </div>
           <button
@@ -174,100 +150,71 @@ export default function ResearchNetworkPage() {
         </div>
       </form>
 
-      {/* Requests list */}
-      <div
-        style={{
-          background: "#FFFFFF",
-          border: "1.5px solid #DCDCDC",
-          borderRadius: 10,
-          overflow: "hidden",
-        }}
-      >
+      <div style={{ background: "#FFFFFF", border: "1.5px solid #DCDCDC", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "14px 20px", borderBottom: "1px solid #EEEEEE", fontSize: 14, fontWeight: 600, color: "#050505" }}>
-          Collaboration Requests
+          Collaboration Requests ({requests.length})
         </div>
         {requests.length === 0 ? (
-          <div style={{ padding: 40, textAlign: "center", fontSize: 13, color: "#AAAAAA" }}>
+          <div style={{ padding: 40, textAlign: "center", fontSize: 13, color: "#777777" }}>
             No research requests yet.
           </div>
         ) : (
-          requests.map((r) => (
-            <div
-              key={r.id}
-              style={{
-                padding: "16px 20px",
-                borderBottom: "1px solid #EEEEEE",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: 16,
-              }}
-            >
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "#050505" }}>{r.title}</div>
-                <div style={{ fontSize: 12.5, color: "#777777", marginTop: 2 }}>
-                  {r.institution} {r.purpose ? `· ${r.purpose}` : ""}
+          requests.map((r) => {
+            const st = r.status.toUpperCase();
+            return (
+              <div
+                key={r.id}
+                style={{
+                  padding: "16px 20px",
+                  borderBottom: "1px solid #EEEEEE",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 16,
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "#050505" }}>{r.title}</div>
+                  <div style={{ fontSize: 12.5, color: "#777777", marginTop: 2 }}>
+                    {r.requestor_org} {r.purpose ? `· ${r.purpose}` : ""}
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span
+                    style={{
+                      padding: "3px 8px",
+                      borderRadius: 4,
+                      fontSize: 10.5,
+                      fontWeight: 600,
+                      textTransform: "uppercase",
+                      background: st === "APPROVED" ? "#050505" : st === "REJECTED" ? "#FFE5E5" : "#E6E6E6",
+                      color: st === "APPROVED" ? "#FFFFFF" : st === "REJECTED" ? "#CC3333" : "#050505",
+                    }}
+                  >
+                    {st}
+                  </span>
+                  {(st === "SUBMITTED" || st === "PENDING" || st === "UNDER_REVIEW") && (
+                    <>
+                      <button
+                        onClick={() => handleAction(r.id, "approve")}
+                        title="Approve"
+                        style={{ padding: 6, border: "1px solid #DCDCDC", borderRadius: 6, background: "#FFFFFF", cursor: "pointer", color: "#050505" }}
+                      >
+                        <Check size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleAction(r.id, "reject")}
+                        title="Reject"
+                        style={{ padding: 6, border: "1px solid #DCDCDC", borderRadius: 6, background: "#FFFFFF", cursor: "pointer", color: "#CC3333" }}
+                      >
+                        <X size={14} />
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span
-                  style={{
-                    padding: "3px 8px",
-                    borderRadius: 4,
-                    fontSize: 10.5,
-                    fontWeight: 600,
-                    textTransform: "uppercase",
-                    background:
-                      r.status === "approved"
-                        ? "#050505"
-                        : r.status === "rejected"
-                        ? "#FFE5E5"
-                        : "#E6E6E6",
-                    color:
-                      r.status === "approved"
-                        ? "#FFFFFF"
-                        : r.status === "rejected"
-                        ? "#CC3333"
-                        : "#050505",
-                  }}
-                >
-                  {r.status}
-                </span>
-                {r.status === "pending" && (
-                  <>
-                    <button
-                      onClick={() => handleAction(r.id, "approve")}
-                      title="Approve"
-                      style={{
-                        padding: 6,
-                        border: "1px solid #DCDCDC",
-                        borderRadius: 6,
-                        background: "#FFFFFF",
-                        cursor: "pointer",
-                        color: "#050505",
-                      }}
-                    >
-                      <Check size={14} />
-                    </button>
-                    <button
-                      onClick={() => handleAction(r.id, "reject")}
-                      title="Reject"
-                      style={{
-                        padding: 6,
-                        border: "1px solid #DCDCDC",
-                        borderRadius: 6,
-                        background: "#FFFFFF",
-                        cursor: "pointer",
-                        color: "#CC3333",
-                      }}
-                    >
-                      <X size={14} />
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

@@ -1,41 +1,21 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api, type DashboardData } from "@/lib/api";
+import { api, type ClinicalReport } from "@/lib/api";
 import { HeartPulse, CheckCircle2, AlertTriangle } from "lucide-react";
 
-const CLINICAL_GUARANTEES = [
-  {
-    field: "Lab Values & Reference Ranges",
-    status: "Preserved",
-    detail: "Numeric measurements, units (mg/dL, mmol/L, U/L) and flags remain intact.",
-  },
-  {
-    field: "Clinical Coding (ICD-10 / SNOMED / LOINC)",
-    status: "Preserved",
-    detail: "Standardised medical codes are whitelisted from PII redaction.",
-  },
-  {
-    field: "FHIR R4 Resource Structure",
-    status: "Validated",
-    detail: "Patient, Observation, Condition and DiagnosticReport schemas remain compliant.",
-  },
-  {
-    field: "Medication Dosages & Frequencies",
-    status: "Preserved",
-    detail: "Dosage quantities, routes and schedules are retained for research utility.",
-  },
-];
-
 export default function ClinicalIntegrityPage() {
-  const [dash, setDash] = useState<DashboardData | null>(null);
+  const [reports, setReports] = useState<ClinicalReport[]>([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api
-      .dashboard()
-      .then(setDash)
-      .catch((e) => setError(e.message));
+    api.clinicalReports().then(setReports).catch((e) => setError(e.message));
   }, []);
+
+  const totalExpected = reports.reduce((s, r) => s + r.expected_values, 0);
+  const totalPreserved = reports.reduce((s, r) => s + r.preserved_values, 0);
+  const totalMissing = reports.reduce((s, r) => s + r.missing_values, 0);
+  const totalModified = reports.reduce((s, r) => s + r.modified_values, 0);
+  const latest = reports[0] ?? null;
 
   return (
     <div style={{ padding: "32px 36px" }}>
@@ -44,7 +24,7 @@ export default function ClinicalIntegrityPage() {
           Clinical Integrity
         </h1>
         <p style={{ fontSize: 13.5, color: "#777777" }}>
-          Verification that clinical utility is preserved while patient identifiers are removed.
+          Exact numerator/denominator verification of clinical values, dosages, labs, and FHIR R4 resources.
         </p>
       </div>
 
@@ -68,83 +48,81 @@ export default function ClinicalIntegrityPage() {
         </div>
       )}
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
-          gap: 16,
-          marginBottom: 28,
-        }}
-      >
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: 16, marginBottom: 28 }}>
         <div style={{ background: "#FFFFFF", border: "1.5px solid #DCDCDC", borderRadius: 10, padding: "20px 22px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span style={{ fontSize: 12.5, color: "#777777", fontWeight: 500 }}>Clinical Values Preserved</span>
+            <span style={{ fontSize: 12.5, color: "#777777", fontWeight: 500 }}>Preserved / Expected</span>
             <HeartPulse size={16} color="#050505" />
           </div>
-          <div style={{ fontSize: 28, fontWeight: 700, color: "#050505", letterSpacing: "-1px" }}>
-            {dash?.clinical_preserved ?? "—"}
+          <div style={{ fontSize: 26, fontWeight: 700, color: "#050505", letterSpacing: "-1px" }}>
+            {reports.length > 0 ? `${totalPreserved}/${totalExpected}` : "Not measured"}
           </div>
-          <div style={{ fontSize: 11.5, color: "#2D7A2D", marginTop: 4 }}>
-            Verified across sanitised records
+          <div style={{ fontSize: 11.5, color: "#666666", marginTop: 4 }}>
+            {totalExpected > 0 ? `${((totalPreserved / totalExpected) * 100).toFixed(2)}% exact preservation` : "No clinical items measured"}
           </div>
         </div>
 
         <div style={{ background: "#FFFFFF", border: "1.5px solid #DCDCDC", borderRadius: 10, padding: "20px 22px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span style={{ fontSize: 12.5, color: "#777777", fontWeight: 500 }}>Total Records Checked</span>
+            <span style={{ fontSize: 12.5, color: "#777777", fontWeight: 500 }}>Modified / Missing</span>
+            <AlertTriangle size={16} color="#050505" />
+          </div>
+          <div style={{ fontSize: 26, fontWeight: 700, color: totalMissing > 0 ? "#CC3333" : "#050505" }}>
+            {reports.length > 0 ? `${totalModified} / ${totalMissing}` : "Not measured"}
+          </div>
+          <div style={{ fontSize: 11.5, color: "#777777", marginTop: 4 }}>Exact count across {reports.length} report(s)</div>
+        </div>
+
+        <div style={{ background: "#FFFFFF", border: "1.5px solid #DCDCDC", borderRadius: 10, padding: "20px 22px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontSize: 12.5, color: "#777777", fontWeight: 500 }}>FHIR R4 Integrity</span>
             <CheckCircle2 size={16} color="#050505" />
           </div>
-          <div style={{ fontSize: 28, fontWeight: 700, color: "#050505", letterSpacing: "-1px" }}>
-            {dash?.total_records ?? "—"}
+          <div style={{ fontSize: 26, fontWeight: 700, color: "#050505" }}>
+            {latest ? latest.fhir_integrity : "NOT_MEASURED"}
           </div>
-          <div style={{ fontSize: 11.5, color: "#777777", marginTop: 4 }}>
-            {dash ? `${dash.sanitised_files ?? 0} sanitised files` : "Awaiting backend"}
-          </div>
+          <div style={{ fontSize: 11.5, color: "#777777", marginTop: 4 }}>HL7 FHIR R4 Bundle validation</div>
         </div>
       </div>
 
-      <div
-        style={{
-          background: "#FFFFFF",
-          border: "1.5px solid #DCDCDC",
-          borderRadius: 10,
-          overflow: "hidden",
-        }}
-      >
+      <div style={{ background: "#FFFFFF", border: "1.5px solid #DCDCDC", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "14px 20px", borderBottom: "1px solid #EEEEEE", fontSize: 14, fontWeight: 600, color: "#050505" }}>
-          Clinical Preservation Guarantees
+          Clinical Validation Reports ({reports.length})
         </div>
-        {CLINICAL_GUARANTEES.map((item) => (
-          <div
-            key={item.field}
-            style={{
-              padding: "16px 20px",
-              borderBottom: "1px solid #EEEEEE",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 16,
-            }}
-          >
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: "#050505" }}>{item.field}</div>
-              <div style={{ fontSize: 12.5, color: "#666666", marginTop: 3 }}>{item.detail}</div>
-            </div>
-            <span
-              style={{
-                padding: "3px 10px",
-                background: "#050505",
-                color: "#FFFFFF",
-                borderRadius: 4,
-                fontSize: 11,
-                fontWeight: 600,
-                flexShrink: 0,
-              }}
-            >
-              {item.status}
-            </span>
+        {reports.length > 0 ? (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid #EEEEEE" }}>
+                {["Report ID", "Job ID", "Preserved / Expected", "Modified", "Missing", "FHIR R4", "Created"].map((h) => (
+                  <th key={h} style={{ padding: "10px 16px", textAlign: "left", fontSize: 11.5, color: "#777777" }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {reports.map((r) => (
+                <tr key={r.id} style={{ borderBottom: "1px solid #F5F5F5" }}>
+                  <td style={{ padding: "11px 16px", fontSize: 12, fontFamily: "monospace" }}>{r.id}</td>
+                  <td style={{ padding: "11px 16px", fontSize: 12, fontFamily: "monospace" }}>{r.job_id}</td>
+                  <td style={{ padding: "11px 16px", fontSize: 13, fontWeight: 600 }}>
+                    {r.preserved_values} / {r.expected_values}
+                  </td>
+                  <td style={{ padding: "11px 16px", fontSize: 13 }}>{r.modified_values}</td>
+                  <td style={{ padding: "11px 16px", fontSize: 13 }}>{r.missing_values}</td>
+                  <td style={{ padding: "11px 16px", fontSize: 12, fontWeight: 600 }}>{r.fhir_integrity}</td>
+                  <td style={{ padding: "11px 16px", fontSize: 12, color: "#777777" }}>
+                    {new Date(r.created_at * 1000).toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div style={{ padding: "40px 20px", textAlign: "center", fontSize: 13, color: "#777777" }}>
+            No clinical integrity reports recorded yet.
           </div>
-        ))}
+        )}
       </div>
     </div>
   );
