@@ -50,6 +50,10 @@ if _ENV_FILE.exists():
             os.environ[_k] = _v
 
 from .audit import record_audit_event
+from .dashboard_metrics import (
+    get_dashboard_metrics_summary,
+    get_runtime_execution_compliance,
+)
 from .auth import (
     ROLE_AUDITOR,
     ROLE_ORG_ADMIN,
@@ -667,6 +671,42 @@ def get_dashboard_recent_jobs(user: Dict[str, Any] = Depends(require_user)) -> L
 @app.get("/api/dashboard/audit-events")
 def get_dashboard_audit_events(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
     return _compute_dashboard_payload(user)["audit_events"]
+
+
+@app.get("/api/system/compliance")
+def get_system_compliance() -> Dict[str, Any]:
+    """Publicly safe repository/runtime execution compliance check (zero patient or org data)."""
+    return get_runtime_execution_compliance()
+
+
+@app.get("/api/dashboard/metrics-summary")
+def get_dashboard_metrics_summary_endpoint(
+    scope: str = Query(default="latest"),
+    user: Dict[str, Any] = Depends(require_user),
+) -> Dict[str, Any]:
+    org_ids = _authorised_org_ids(user)
+    with get_db() as conn:
+        try:
+            return get_dashboard_metrics_summary(conn, org_ids, scope=scope)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get("/api/jobs/{job_id}/dashboard-metrics")
+def get_job_dashboard_metrics_endpoint(
+    job_id: str,
+    user: Dict[str, Any] = Depends(require_user),
+) -> Dict[str, Any]:
+    org_ids = _authorised_org_ids(user)
+    with get_db() as conn:
+        try:
+            return get_dashboard_metrics_summary(conn, org_ids, scope=job_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
 
 
 # ==============================================================================

@@ -8,6 +8,7 @@ import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { ReleaseReadinessPanel } from "@/components/dashboard/ReleaseReadinessPanel";
 import { GettingStartedPanel } from "@/components/dashboard/GettingStartedPanel";
 import { MetricGrid } from "@/components/dashboard/MetricGrid";
+import { PrivacyPerformanceOverview } from "@/components/dashboard/PrivacyPerformanceOverview";
 import { ProcessingWorkflow } from "@/components/dashboard/ProcessingWorkflow";
 import { RecentJobsPanel } from "@/components/dashboard/RecentJobsPanel";
 import { AuditEventsPanel } from "@/components/dashboard/AuditEventsPanel";
@@ -17,12 +18,15 @@ export default function DashboardPage() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [error, setError] = useState("");
   const [unauth, setUnauth] = useState(false);
 
   const loadDashboard = useCallback(async (isRefresh = false) => {
-    if (isRefresh) setRefreshing(true);
-    else setLoading(true);
+    if (isRefresh) {
+      setRefreshing(true);
+      setRefreshKey((k) => k + 1);
+    } else setLoading(true);
     setError("");
     try {
       const [dash, me] = await Promise.all([api.dashboard(), api.me()]);
@@ -104,6 +108,9 @@ export default function DashboardPage() {
 
             {/* C. PRIMARY GET-STARTED / OPERATIONAL ACTION */}
             <GettingStartedPanel hasProcessedData={hasProcessedData} />
+
+            {/* D0. DATASET-AWARE PRIVACY PERFORMANCE OVERVIEW */}
+            <PrivacyPerformanceOverview externalRefreshKey={refreshKey} />
 
             {/* D. PRIVACY PERFORMANCE METRICS (3x2 grid) */}
             <MetricGrid metrics={data.metrics} />
