@@ -1,0 +1,63 @@
+{
+  "name": "medilocker-desktop",
+  "version": "2.0.0",
+  "description": "MediLocker — Offline-First Healthcare Data Privacy Infrastructure",
+  "main": "main.js",
+  "author": "Team Halfwave — Yugaantar DevForge",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win nsis portable --x64"
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "org.yugaantar.medilocker",
+    "productName": "MediLocker",
+    "directories": {
+      "output": "../release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "assets/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "py_dist/medilocker-backend",
+        "to": "backend"
+      },
+      {
+        "from": "web_dist",
+        "to": "web"
+      },
+      {
+        "from": "node_runtime",
+        "to": "node"
+      }
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "assets/icon.ico",
+      "artifactName": "MediLocker-${target}-x64.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "MediLocker",
+      "uninstallDisplayName": "MediLocker",
+      "artifactName": "MediLocker-Setup-x64.exe"
+    },
+    "portable": {
+      "artifactName": "MediLocker-Portable-x64.exe"
+    }
+  }
+}

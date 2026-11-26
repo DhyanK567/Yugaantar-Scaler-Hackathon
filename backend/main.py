@@ -14,6 +14,7 @@ import json
 import os
 import re
 import secrets
+import sys
 import time
 import zipfile
 from pathlib import Path
@@ -161,6 +162,61 @@ def get_health() -> Dict[str, Any]:
         "mode": "air-gapped-cpu",
         "timestamp": time.time(),
     }
+
+
+@app.get("/api/system/diagnostics")
+def get_system_diagnostics(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    import shutil
+    from .database import get_db_path
+
+    db_path = get_db_path()
+    usage = shutil.disk_usage(db_path.parent)
+    version_file = Path(__file__).resolve().parent.parent / "VERSION"
+    version = version_file.read_text(encoding="utf-8").strip() if version_file.exists() else "2.0.0-desktop"
+    return {
+        "desktop_runtime": "Electron + Frozen Python" if getattr(sys, "frozen", False) else "Local Python + Node",
+        "api_status": "HEALTHY",
+        "engine_status": "READY" if (STARTER_DIR / "main.py").exists() else "UNAVAILABLE",
+        "database_status": "CONNECTED" if db_path.exists() else "INITIALISED",
+        "encryption_configured": bool(os.environ.get("RAKSHA_SECRET")),
+        "offline_mode": is_offline_mode_enabled(),
+        "disk_free_bytes": usage.free,
+        "disk_total_bytes": usage.total,
+        "data_dir": str(db_path.parent),
+        "version": version,
+    }
+
+
+@app.get("/api/reports/brief-pdf")
+def download_brief_pdf(user: Dict[str, Any] = Depends(require_user)):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    reports_dir = Path(os.environ.get("MEDILOCKER_DATA_DIR") or (Path(__file__).resolve().parent.parent / "data")) / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = reports_dir / "MediLocker_Operational_Report.pdf"
+
+    dash = _compute_dashboard_payload(user)
+    doc = SimpleDocTemplate(str(pdf_path), pagesize=A4)
+    styles = getSampleStyleSheet()
+    story = [
+        Paragraph("MediLocker Operational Privacy Report", styles["Title"]),
+        Spacer(1, 12),
+        Paragraph(f"Overall Release Readiness: {dash['privacy_health']['overall_readiness']}", styles["Normal"]),
+        Paragraph(f"Files Processed: {dash['metrics']['files_processed']['display']}", styles["Normal"]),
+        Paragraph(f"Records Processed: {dash['metrics']['records_processed']['display']}", styles["Normal"]),
+        Paragraph(f"PII Detected: {dash['metrics']['pii_detected']['display']}", styles["Normal"]),
+        Paragraph(f"Clinical Values Preserved: {dash['metrics']['clinical_preserved']['display']}", styles["Normal"]),
+        Paragraph(f"Identity Precision: {dash['metrics']['identity_precision']['display']}", styles["Normal"]),
+        Paragraph(f"Canary Leaks: {dash['metrics']['canary_leaks']['display']}", styles["Normal"]),
+    ]
+    doc.build(story)
+    return StreamingResponse(
+        io.BytesIO(pdf_path.read_bytes()),
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=MediLocker_Operational_Report.pdf"},
+    )
 
 
 @app.get("/api/auth/config")
