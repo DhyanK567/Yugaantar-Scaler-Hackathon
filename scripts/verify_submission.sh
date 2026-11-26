@@ -38,6 +38,7 @@ run_check "Clinical Integrity" python3 tests/clinical_integrity/test_clinical_in
 run_check "Clinical Drift" python3 tests/clinical_drift/test_clinical_drift.py
 run_check "Privacy Attacks" python3 tests/privacy_attacks/test_privacy_attacks.py
 run_check "Cryptography Security" python3 tests/cryptography/test_crypto_security.py
+run_check "Filename Privacy (M16.1)" python3 tests/cryptography/test_filename_privacy.py
 run_check "Multilingual PII" python3 tests/multilingual/test_multilingual_pii.py
 run_check "Independent Benchmark" python3 tests/independent_benchmark/test_independent_benchmark.py
 run_check "Full Pipeline Integration" python3 tests/integration/test_full_pipeline_integration.py
