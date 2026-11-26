@@ -1,20 +1,35 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api, type DashboardData } from "@/lib/api";
-import { FileKey2, Download, CheckCircle2, AlertTriangle } from "lucide-react";
+import { api, type Passport } from "@/lib/api";
+import { FileKey2, Download, ShieldCheck, AlertTriangle } from "lucide-react";
 
 export default function PrivacyPassportsPage() {
-  const [dash, setDash] = useState<DashboardData | null>(null);
+  const [passports, setPassports] = useState<Passport[]>([]);
+  const [verifyMsg, setVerifyMsg] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
 
+  function load() {
+    api.passports().then(setPassports).catch((e) => setError(e.message));
+  }
+
   useEffect(() => {
-    api
-      .dashboard()
-      .then(setDash)
-      .catch((e) => setError(e.message));
+    load();
   }, []);
 
-  const jobs = dash?.recent_jobs ?? [];
+  async function handleVerify(id: string) {
+    try {
+      const res = await api.verifyPassport(id);
+      setVerifyMsg((prev) => ({
+        ...prev,
+        [id]: res.integrity_valid
+          ? `Hash verified (${res.signature_status})`
+          : "Integrity mismatch!",
+      }));
+      load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   return (
     <div style={{ padding: "32px 36px" }}>
@@ -23,7 +38,7 @@ export default function PrivacyPassportsPage() {
           Privacy Passports
         </h1>
         <p style={{ fontSize: 13.5, color: "#777777" }}>
-          Cryptographically verifiable compliance manifests generated for every sanitised dataset.
+          Hash-verified compliance manifests for sanitised datasets. Unsigned manifests are explicitly labelled UNSIGNED.
         </p>
       </div>
 
@@ -47,7 +62,7 @@ export default function PrivacyPassportsPage() {
         </div>
       )}
 
-      {jobs.length === 0 ? (
+      {passports.length === 0 ? (
         <div
           style={{
             background: "#FFFFFF",
@@ -59,19 +74,13 @@ export default function PrivacyPassportsPage() {
             fontSize: 13.5,
           }}
         >
-          No Privacy Passports generated yet. Run a sanitisation job under Datasets to issue a passport.
+          No Privacy Passports issued yet. Upload and process a dataset to generate a verifiable passport.
         </div>
       ) : (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
-            gap: 16,
-          }}
-        >
-          {jobs.map((job) => (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(330px, 1fr))", gap: 16 }}>
+          {passports.map((p) => (
             <div
-              key={job.id}
+              key={p.id}
               style={{
                 background: "#FFFFFF",
                 border: "1.5px solid #DCDCDC",
@@ -79,64 +88,101 @@ export default function PrivacyPassportsPage() {
                 padding: 22,
                 display: "flex",
                 flexDirection: "column",
-                gap: 14,
+                gap: 12,
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <FileKey2 size={18} color="#050505" />
-                  <span style={{ fontSize: 14, fontWeight: 600, color: "#050505" }}>
-                    Passport {job.id.slice(0, 8)}
-                  </span>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: "#050505" }}>{p.id}</span>
                 </div>
                 <span
                   style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 4,
-                    fontSize: 11,
-                    fontWeight: 600,
+                    fontSize: 10.5,
+                    fontWeight: 700,
                     padding: "3px 8px",
                     borderRadius: 4,
-                    background: job.status === "done" ? "#050505" : "#E6E6E6",
-                    color: job.status === "done" ? "#FFFFFF" : "#050505",
+                    background: p.signature_status === "UNSIGNED" ? "#FFF5D6" : "#050505",
+                    color: p.signature_status === "UNSIGNED" ? "#8A6500" : "#FFFFFF",
                   }}
                 >
-                  <CheckCircle2 size={11} />
-                  {job.status.toUpperCase()}
+                  {p.signature_status}
                 </span>
               </div>
 
-              <div style={{ fontSize: 12.5, color: "#666666", lineHeight: 1.6 }}>
-                <div>Records: {job.records_processed ?? "—"}</div>
-                <div>Files: {job.file_count ?? "—"}</div>
-                <div>Issued: {new Date(job.created_at).toLocaleString()}</div>
+              <div style={{ fontSize: 12.5, color: "#555555", lineHeight: 1.6 }}>
+                <div><strong>Dataset:</strong> {p.dataset_name || p.dataset_id || "—"}</div>
+                <div><strong>Organisation:</strong> {p.organisation_name || p.organisation_id || "—"}</div>
+                <div><strong>Job:</strong> <code>{p.job_id}</code></div>
+                <div><strong>SHA-256:</strong> <code>{p.manifest_hash.slice(0, 20)}…</code></div>
+                <div><strong>Issued:</strong> {new Date(p.created_at * 1000).toLocaleString()}</div>
               </div>
 
-              {job.status === "done" && (
-                <a
-                  href={api.downloadJob(job.id)}
-                  target="_blank"
-                  rel="noreferrer"
+              {verifyMsg[p.id] && (
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#2D7A2D", background: "#F2F8F2", padding: "6px 10px", borderRadius: 5 }}>
+                  {verifyMsg[p.id]}
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+                <button
+                  onClick={() => handleVerify(p.id)}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
-                    justifyContent: "center",
-                    gap: 6,
-                    padding: "9px 14px",
-                    background: "#F2F2F2",
-                    border: "1.5px solid #DCDCDC",
-                    borderRadius: 7,
-                    fontSize: 13,
-                    fontWeight: 500,
-                    color: "#050505",
-                    textDecoration: "none",
+                    gap: 5,
+                    padding: "7px 12px",
+                    background: "#050505",
+                    color: "#FFFFFF",
+                    border: "none",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
                   }}
                 >
-                  <Download size={14} />
-                  Download Sanitised Bundle
+                  <ShieldCheck size={13} />
+                  Verify Hash
+                </button>
+                <a
+                  href={api.downloadPassportUrl(p.id, "json")}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    padding: "7px 12px",
+                    background: "#F2F2F2",
+                    border: "1px solid #DCDCDC",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    color: "#050505",
+                    textDecoration: "none",
+                    fontWeight: 500,
+                  }}
+                >
+                  <Download size={13} />
+                  JSON
                 </a>
-              )}
+                <a
+                  href={api.downloadPassportUrl(p.id, "html")}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    padding: "7px 12px",
+                    background: "#F2F2F2",
+                    border: "1px solid #DCDCDC",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    color: "#050505",
+                    textDecoration: "none",
+                    fontWeight: 500,
+                  }}
+                >
+                  <Download size={13} />
+                  HTML
+                </a>
+              </div>
             </div>
           ))}
         </div>

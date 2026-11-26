@@ -1,72 +1,14 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api, type PrivacyIntelligence, type ThreatLabData } from "@/lib/api";
+import { api, type PrivacyIntelligence } from "@/lib/api";
 import { Brain, AlertTriangle } from "lucide-react";
-
-function BreakdownCard({
-  title,
-  entries,
-}: {
-  title: string;
-  entries?: Record<string, number>;
-}) {
-  const items = entries ? Object.entries(entries) : [];
-  const max = items.reduce((m, [, v]) => Math.max(m, v), 1);
-
-  return (
-    <div
-      style={{
-        background: "#FFFFFF",
-        border: "1.5px solid #DCDCDC",
-        borderRadius: 10,
-        padding: 22,
-      }}
-    >
-      <div style={{ fontSize: 14, fontWeight: 600, color: "#050505", marginBottom: 18 }}>
-        {title}
-      </div>
-      {items.length === 0 ? (
-        <div style={{ fontSize: 13, color: "#AAAAAA", padding: "24px 0", textAlign: "center" }}>
-          No telemetry available yet.
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {items.map(([key, val]) => (
-            <div key={key}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 5 }}>
-                <span style={{ color: "#050505", fontWeight: 500 }}>{key}</span>
-                <span style={{ color: "#777777" }}>{val.toLocaleString()}</span>
-              </div>
-              <div style={{ height: 6, background: "#F2F2F2", borderRadius: 3, overflow: "hidden" }}>
-                <div
-                  style={{
-                    height: "100%",
-                    width: `${Math.round((val / max) * 100)}%`,
-                    background: "#050505",
-                    borderRadius: 3,
-                  }}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default function PrivacyIntelligencePage() {
   const [intel, setIntel] = useState<PrivacyIntelligence | null>(null);
-  const [threat, setThreat] = useState<ThreatLabData | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    Promise.all([api.privacyIntelligence(), api.threatLab()])
-      .then(([i, t]) => {
-        setIntel(i);
-        setThreat(t);
-      })
-      .catch((e) => setError(e.message));
+    api.privacyIntelligence().then(setIntel).catch((e) => setError(e.message));
   }, []);
 
   return (
@@ -76,7 +18,7 @@ export default function PrivacyIntelligencePage() {
           Privacy Intelligence
         </h1>
         <p style={{ fontSize: 13.5, color: "#777777" }}>
-          Identifier distribution, multilingual coverage and re-identification risk posture.
+          Measured PII detection, residual leakage assessments, and canary containment status.
         </p>
       </div>
 
@@ -100,7 +42,7 @@ export default function PrivacyIntelligencePage() {
         </div>
       )}
 
-      {/* Summary banner */}
+      {/* Summary */}
       <div
         style={{
           background: "#050505",
@@ -108,49 +50,76 @@ export default function PrivacyIntelligencePage() {
           borderRadius: 10,
           padding: "22px 26px",
           marginBottom: 24,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
           gap: 16,
+          alignItems: "center",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <Brain size={22} color="#FFFFFF" />
           <div>
-            <div style={{ fontSize: 12, color: "#888888", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-              Aggregate Re-Identification Risk Score
-            </div>
-            <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-1px" }}>
-              {threat?.risk_score != null ? `${threat.risk_score}` : "—"}
-            </div>
+            <div style={{ fontSize: 11, color: "#888888", textTransform: "uppercase" }}>Status</div>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>{intel?.status ?? "—"}</div>
           </div>
         </div>
-        {intel?.top_identifiers && intel.top_identifiers.length > 0 && (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {intel.top_identifiers.map((id) => (
-              <span
-                key={id}
-                style={{
-                  padding: "4px 10px",
-                  background: "#1E1E1E",
-                  border: "1px solid #333333",
-                  borderRadius: 5,
-                  fontSize: 12,
-                  color: "#E6E6E6",
-                }}
-              >
-                {id}
-              </span>
-            ))}
+        <div>
+          <div style={{ fontSize: 11, color: "#888888", textTransform: "uppercase" }}>Total PII Detected</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>
+            {intel?.status === "MEASURED" ? intel.total_pii_detected : "Not measured"}
           </div>
-        )}
+        </div>
+        <div>
+          <div style={{ fontSize: 11, color: "#888888", textTransform: "uppercase" }}>Residual Leakage</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>
+            {intel?.status === "MEASURED" ? intel.total_residual_leakage : "Not measured"}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 11, color: "#888888", textTransform: "uppercase" }}>Canary Containment</div>
+          <div style={{ fontSize: 20, fontWeight: 700 }}>{intel?.canary_status ?? "NOT_RUN"}</div>
+        </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 20 }}>
-        <BreakdownCard title="PII Category Breakdown" entries={intel?.pii_breakdown} />
-        <BreakdownCard title="Language Distribution" entries={intel?.language_distribution} />
-        <BreakdownCard title="Risk Distribution" entries={intel?.risk_distribution} />
+      {/* Assessments table */}
+      <div style={{ background: "#FFFFFF", border: "1.5px solid #DCDCDC", borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ padding: "14px 20px", borderBottom: "1px solid #EEEEEE", fontSize: 14, fontWeight: 600, color: "#050505" }}>
+          Measured Privacy Assessments ({intel?.assessments?.length ?? 0})
+        </div>
+        {intel && intel.assessments.length > 0 ? (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid #EEEEEE" }}>
+                {["Assessment ID", "Job ID", "PII Detected", "Residual Leaks", "Canary", "QI Risk", "Release Eligible"].map((h) => (
+                  <th key={h} style={{ padding: "10px 16px", textAlign: "left", fontSize: 11.5, color: "#777777" }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {intel.assessments.map((a) => (
+                <tr key={a.id} style={{ borderBottom: "1px solid #F5F5F5" }}>
+                  <td style={{ padding: "11px 16px", fontSize: 12, fontFamily: "monospace" }}>{a.id}</td>
+                  <td style={{ padding: "11px 16px", fontSize: 12, fontFamily: "monospace" }}>{a.job_id}</td>
+                  <td style={{ padding: "11px 16px", fontSize: 13, fontWeight: 600 }}>{a.pii_detected}</td>
+                  <td style={{ padding: "11px 16px", fontSize: 13 }}>{a.residual_leakage}</td>
+                  <td style={{ padding: "11px 16px", fontSize: 12, fontWeight: 600 }}>
+                    {a.canary_status} ({a.canary_leaks}/{a.canary_planted})
+                  </td>
+                  <td style={{ padding: "11px 16px", fontSize: 13 }}>{a.qi_risk_score}% ({a.reid_risk_level})</td>
+                  <td style={{ padding: "11px 16px", fontSize: 12, fontWeight: 600 }}>
+                    {a.release_eligible ? "YES" : "NO"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div style={{ padding: "40px 20px", textAlign: "center", fontSize: 13, color: "#777777" }}>
+            No privacy assessments recorded yet. Upload and process a dataset first.
+          </div>
+        )}
       </div>
     </div>
   );

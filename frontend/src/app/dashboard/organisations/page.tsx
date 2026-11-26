@@ -24,20 +24,13 @@ export default function OrganisationsPage() {
 
   return (
     <div style={{ padding: "32px 36px" }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          marginBottom: 28,
-        }}
-      >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 28 }}>
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 700, color: "#050505", letterSpacing: "-0.8px", marginBottom: 4 }}>
             Organisations
           </h1>
           <p style={{ fontSize: 13.5, color: "#777777" }}>
-            Hospitals, diagnostic laboratories and research institutions in your network.
+            Authorised hospitals, diagnostic laboratories, and research institutions for your account.
           </p>
         </div>
         <button
@@ -97,16 +90,10 @@ export default function OrganisationsPage() {
             fontSize: 13.5,
           }}
         >
-          No organisations registered yet.
+          No authorised organisations found for your account.
         </div>
       ) : (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-            gap: 16,
-          }}
-        >
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
           {orgs.map((org) => (
             <div
               key={org.id}
@@ -134,8 +121,8 @@ export default function OrganisationsPage() {
                 <span
                   style={{
                     padding: "3px 8px",
-                    background: org.status === "active" ? "#050505" : "#E6E6E6",
-                    color: org.status === "active" ? "#FFFFFF" : "#050505",
+                    background: org.status.toLowerCase() === "active" ? "#050505" : "#E6E6E6",
+                    color: org.status.toLowerCase() === "active" ? "#FFFFFF" : "#050505",
                     borderRadius: 4,
                     fontSize: 10.5,
                     fontWeight: 600,
@@ -150,7 +137,7 @@ export default function OrganisationsPage() {
                 {org.name}
               </div>
               <div style={{ fontSize: 12.5, color: "#777777", marginBottom: 14 }}>
-                {org.type}
+                {org.org_type} · {org.region}
               </div>
               <div
                 style={{
@@ -162,9 +149,9 @@ export default function OrganisationsPage() {
                   color: "#555555",
                 }}
               >
-                <span>Records shared</span>
+                <span>Records contributed</span>
                 <strong style={{ color: "#050505" }}>
-                  {org.records_shared != null ? org.records_shared.toLocaleString() : "—"}
+                  {org.records_contributed.toLocaleString()}
                 </strong>
               </div>
             </div>

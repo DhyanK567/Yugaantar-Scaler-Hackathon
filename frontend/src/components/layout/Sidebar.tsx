@@ -2,6 +2,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   LayoutDashboard,
   Database,
@@ -17,6 +18,7 @@ import {
   LogOut,
   ChevronRight,
 } from "lucide-react";
+import { api, type AuthUser } from "@/lib/api";
 
 const NAV = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -35,11 +37,37 @@ const NAV = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const [user, setUser] = useState<AuthUser | null>(null);
+
+  useEffect(() => {
+    api
+      .me()
+      .then((res) => setUser(res.user))
+      .catch(() => {});
+  }, []);
+
+  async function handleLogout() {
+    try {
+      await api.logout();
+    } catch {
+      // ignore
+    }
+    window.location.href = "/login";
+  }
+
+  async function handleOrgSwitch(orgId: string) {
+    try {
+      await api.switchOrg(orgId);
+      window.location.reload();
+    } catch {
+      // ignore
+    }
+  }
 
   return (
     <aside
       style={{
-        width: 240,
+        width: 244,
         minHeight: "100vh",
         background: "#FFFFFF",
         borderRight: "1px solid #DCDCDC",
@@ -51,7 +79,7 @@ export default function Sidebar() {
       {/* Logo */}
       <div
         style={{
-          padding: "24px 20px 20px",
+          padding: "20px 20px 16px",
           borderBottom: "1px solid #DCDCDC",
           display: "flex",
           alignItems: "center",
@@ -78,6 +106,34 @@ export default function Sidebar() {
         </span>
       </div>
 
+      {/* Active Org Switcher */}
+      {user && user.memberships.length > 0 && (
+        <div style={{ padding: "12px 14px", borderBottom: "1px solid #EEEEEE" }}>
+          <div style={{ fontSize: 10.5, color: "#777777", fontWeight: 600, marginBottom: 4, textTransform: "uppercase" }}>
+            Organisation
+          </div>
+          <select
+            value={user.active_org_id || ""}
+            onChange={(e) => handleOrgSwitch(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "6px 8px",
+              border: "1px solid #DCDCDC",
+              borderRadius: 6,
+              fontSize: 12.5,
+              color: "#050505",
+              background: "#FAFAFA",
+            }}
+          >
+            {user.memberships.map((m) => (
+              <option key={m.organisation_id} value={m.organisation_id}>
+                {m.organisation_name} ({m.role})
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {/* Nav */}
       <nav style={{ flex: 1, padding: "12px 8px", overflowY: "auto" }}>
         {NAV.map((item) => {
@@ -102,7 +158,6 @@ export default function Sidebar() {
                 fontWeight: active ? 500 : 400,
                 color: active ? "#050505" : "#555555",
                 background: active ? "#F2F2F2" : "transparent",
-                transition: "background 0.1s, color 0.1s",
               }}
             >
               <Icon size={15} strokeWidth={active ? 2 : 1.5} />
@@ -119,40 +174,33 @@ export default function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div
-        style={{
-          padding: "16px 8px",
-          borderTop: "1px solid #DCDCDC",
-        }}
-      >
-        <Link
-          href="/"
+      <div style={{ padding: "14px 8px", borderTop: "1px solid #DCDCDC" }}>
+        {user && (
+          <div style={{ padding: "4px 12px 10px", fontSize: 11.5, color: "#555555" }}>
+            <div style={{ fontWeight: 600, color: "#050505" }}>{user.full_name}</div>
+            <div style={{ color: "#777777", fontSize: 11 }}>{user.email}</div>
+          </div>
+        )}
+        <button
+          onClick={handleLogout}
           style={{
+            width: "100%",
             display: "flex",
             alignItems: "center",
             gap: 10,
             padding: "8px 12px",
             borderRadius: 6,
-            textDecoration: "none",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
             fontSize: 13.5,
             color: "#777777",
+            textAlign: "left",
           }}
         >
           <LogOut size={15} strokeWidth={1.5} />
-          Back to Site
-        </Link>
-        <div
-          style={{
-            padding: "8px 12px",
-            fontSize: 11,
-            color: "#AAAAAA",
-            marginTop: 4,
-          }}
-        >
-          MediLocker v2.0
-          <br />
-          CPU-only · Offline-first
-        </div>
+          Sign Out
+        </button>
       </div>
     </aside>
   );
