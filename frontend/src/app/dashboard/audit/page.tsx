@@ -1,12 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, type AuditEvent } from "@/lib/api";
-import { FileText, RefreshCw, AlertTriangle } from "lucide-react";
+import { FileText, RefreshCw, AlertTriangle, Download } from "lucide-react";
 
 export default function AuditPage() {
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
 
   function load(targetPage = page) {
@@ -35,25 +36,56 @@ export default function AuditPage() {
             Append-only governance log. Never exposes OTPs, secrets, or raw PII.
           </p>
         </div>
-        <button
-          onClick={() => load(page)}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "8px 14px",
-            background: "#FFFFFF",
-            border: "1.5px solid #DCDCDC",
-            borderRadius: 7,
-            fontSize: 13,
-            fontWeight: 500,
-            color: "#050505",
-            cursor: "pointer",
-          }}
-        >
-          <RefreshCw size={13} />
-          Refresh
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={() => load(page)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "8px 14px",
+              background: "#FFFFFF",
+              border: "1.5px solid #DCDCDC",
+              borderRadius: 7,
+              fontSize: 13,
+              fontWeight: 500,
+              color: "#050505",
+              cursor: "pointer",
+            }}
+          >
+            <RefreshCw size={13} />
+            Refresh
+          </button>
+          <button
+            disabled={exporting || events.length === 0}
+            onClick={async () => {
+              setExporting(true);
+              setError("");
+              try {
+                await api.downloadPdf(api.exportAuditPdfUrl(), "MediLocker_Audit_Trail.pdf");
+              } catch (e: unknown) {
+                setError(e instanceof Error ? e.message : String(e));
+              }
+              setExporting(false);
+            }}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "8px 14px",
+              background: "#050505",
+              border: "none",
+              borderRadius: 7,
+              fontSize: 13,
+              fontWeight: 600,
+              color: "#FFFFFF",
+              cursor: exporting || events.length === 0 ? "not-allowed" : "pointer",
+            }}
+          >
+            <Download size={13} />
+            {exporting ? "Generating…" : "Export Audit Report"}
+          </button>
+        </div>
       </div>
 
       {error && (

@@ -1,13 +1,14 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, type JobRecord, type ThreatLabData } from "@/lib/api";
-import { Swords, ShieldCheck, ShieldAlert, AlertTriangle, RefreshCw, Play } from "lucide-react";
+import { Swords, ShieldCheck, ShieldAlert, AlertTriangle, RefreshCw, Play, Download } from "lucide-react";
 
 export default function AttackSimulatorPage() {
   const [data, setData] = useState<ThreatLabData | null>(null);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [selectedJob, setSelectedJob] = useState("");
   const [running, setRunning] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -111,6 +112,37 @@ export default function AttackSimulatorPage() {
           >
             <RefreshCw size={13} />
             Refresh
+          </button>
+          <button
+            disabled={downloading || !data?.history?.[0]?.id}
+            onClick={async () => {
+              const runId = data?.history?.[0]?.id;
+              if (!runId) return;
+              setDownloading(true);
+              setError("");
+              try {
+                await api.downloadPdf(api.downloadAttackRunPdfUrl(runId), `MediLocker_Attack_Simulation_${runId}.pdf`);
+              } catch (e: unknown) {
+                setError(e instanceof Error ? e.message : String(e));
+              }
+              setDownloading(false);
+            }}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "8px 14px",
+              background: "#FFFFFF",
+              border: "1.5px solid #050505",
+              borderRadius: 7,
+              fontSize: 13,
+              fontWeight: 600,
+              color: "#050505",
+              cursor: downloading || !data?.history?.[0]?.id ? "not-allowed" : "pointer",
+            }}
+          >
+            <Download size={13} />
+            {downloading ? "Generating…" : "Download Simulation Report"}
           </button>
         </div>
       </div>
