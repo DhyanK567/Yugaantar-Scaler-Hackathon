@@ -1,40 +1,6 @@
 import Link from "next/link";
 import MarketingNav from "@/components/layout/MarketingNav";
-
-const TRUST_METRICS = [
-  {
-    value: "0/4",
-    label: "Canary leaks",
-    caption: "dev/input · 200 files",
-    cardClass: "bg-[#090909] text-white border-[#090909]",
-    labelClass: "text-[#B5B5B5]",
-    captionClass: "text-[#888888]",
-  },
-  {
-    value: "1.00",
-    label: "Identity precision",
-    caption: "823 records · 0 false merges",
-    cardClass: "bg-[#E6E6E6] text-[#090909] border-[#DADADA]",
-    labelClass: "text-[#555555]",
-    captionClass: "text-[#777777]",
-  },
-  {
-    value: "99.8%",
-    label: "Clinical data preserved",
-    caption: "4,449 / 4,457 values",
-    cardClass: "bg-[#BFBFBF] text-[#090909] border-[#B0B0B0]",
-    labelClass: "text-[#333333]",
-    captionClass: "text-[#555555]",
-  },
-  {
-    value: "100%",
-    label: "Offline, CPU-only",
-    caption: "Zero LLMs · Zero cloud calls",
-    cardClass: "bg-white text-[#090909] border-[#DADADA]",
-    labelClass: "text-[#666666]",
-    captionClass: "text-[#888888]",
-  },
-];
+import { LiveTrustMetrics } from "@/components/landing/LiveTrustMetrics";
 
 const FEATURES = [
   {
@@ -100,32 +66,12 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Four Monochrome Trust Metric Cards */}
+      {/* Four Monochrome Live Trust Metric Cards */}
       <section
-        aria-label="Verified Benchmark Metrics"
+        aria-label="Live Privacy Performance Overview"
         className="max-w-[1160px] mx-auto px-6 py-8"
       >
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {TRUST_METRICS.map((m) => (
-            <div
-              key={m.label}
-              title={m.caption}
-              className={`rounded-2xl border p-7 flex flex-col justify-between min-h-[164px] ${m.cardClass}`}
-            >
-              <div className="font-serif-display text-[44px] sm:text-[48px] leading-none tracking-[-0.02em]">
-                {m.value}
-              </div>
-              <div className="mt-6">
-                <div className={`text-[13.5px] font-medium ${m.labelClass}`}>
-                  {m.label}
-                </div>
-                <div className={`text-[11px] mt-1 ${m.captionClass}`}>
-                  {m.caption}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+        <LiveTrustMetrics />
       </section>
 
       {/* Asymmetric Features Section */}

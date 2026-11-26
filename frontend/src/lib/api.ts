@@ -332,6 +332,66 @@ export interface PrivacyIntelligence {
   last_updated?: number | null;
 }
 
+export interface ExecutionCompliance {
+  mode: "OFFLINE" | "ONLINE" | "UNKNOWN";
+  device: "CPU" | "GPU" | "UNKNOWN";
+  llm_dependency: "NONE" | "DETECTED" | "UNKNOWN";
+  network_calls: number | null;
+  verification_status: "VERIFIED" | "FAILED" | "NOT_VERIFIED";
+  scope: string;
+  checks_passed?: number;
+  checks_total?: number;
+}
+
+export interface DashboardMetricsSummary {
+  scope: "JOB" | "AGGREGATE" | "EMPTY";
+  job_id: string | null;
+  dataset_id: string | null;
+  dataset_name?: string;
+  organisation_id?: string | null;
+  job_status: string;
+  release_decision?: string;
+  processed_at: number | null;
+  jobs_included?: number;
+  metrics: {
+    canary: {
+      status: "TESTED" | "NOT_TESTED" | "FAILED";
+      leaked: number | null;
+      planted: number;
+      files_assessed: number;
+      outcome: "PROTECTED" | "LEAKAGE_DETECTED" | "NOT_TESTED";
+      jobs_tested?: number;
+    };
+    identity: {
+      status: "MEASURED" | "NOT_MEASURED";
+      true_positives: number;
+      false_positives: number;
+      precision: number | null;
+      false_merges: number;
+      records_assessed: number;
+      scope: string;
+    };
+    clinical: {
+      status: "MEASURED" | "NOT_MEASURED" | "FAILED";
+      expected: number;
+      preserved: number;
+      missing: number;
+      modified: number;
+      preservation_percentage: number | null;
+      jobs_measured?: number;
+    };
+    execution: ExecutionCompliance;
+  };
+  available_jobs?: {
+    id: string;
+    dataset_id?: string | null;
+    dataset_name?: string;
+    status: string;
+    release_decision?: string;
+    completed_at?: number | null;
+  }[];
+}
+
 export interface QuarantineItem {
   quarantine_id: string;
   opaque_ref: string;
@@ -489,8 +549,13 @@ export const api = {
     }),
   logout: () => request<{ status: string }>("/api/auth/logout", { method: "POST" }),
 
-  // Dashboard
+  // Dashboard & System Compliance
   dashboard: () => request<DashboardOverview>("/api/dashboard/overview"),
+  dashboardMetricsSummary: (scope = "latest") =>
+    request<DashboardMetricsSummary>(`/api/dashboard/metrics-summary?scope=${encodeURIComponent(scope)}`),
+  jobDashboardMetrics: (jobId: string) =>
+    request<DashboardMetricsSummary>(`/api/jobs/${encodeURIComponent(jobId)}/dashboard-metrics`),
+  systemCompliance: () => request<ExecutionCompliance>("/api/system/compliance"),
 
   // Organisations
   organisations: () => request<Organisation[]>("/api/organisations"),
