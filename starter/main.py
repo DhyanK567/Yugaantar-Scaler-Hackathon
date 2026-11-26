@@ -40,6 +40,7 @@ from raksha_engine.privacy_utility import (
     PrivacyMetrics,
     evaluate_release_gate,
 )
+from raksha_engine.qi_classifier import classify_field_tier
 from raksha_engine.risk_engine import evaluate_corpus_risk
 from raksha_engine.sanitizer import (
     sanitize_filename,
@@ -80,12 +81,17 @@ def _peak_rss_mb() -> float:
 
         pmc = _PMC()
         pmc.cb = ctypes.sizeof(_PMC)
-        hproc = ctypes.windll.kernel32.GetCurrentProcess()
+        get_proc = ctypes.windll.kernel32.GetCurrentProcess
+        get_proc.restype = wt.HANDLE
+        hproc = get_proc()
         fn = getattr(ctypes.windll.kernel32, "K32GetProcessMemoryInfo", None) or getattr(
             ctypes.windll.psapi, "GetProcessMemoryInfo", None
         )
-        if fn and fn(hproc, ctypes.byref(pmc), pmc.cb):
-            return round(pmc.PeakWorkingSetSize / (1024 * 1024), 2)
+        if fn:
+            fn.argtypes = [wt.HANDLE, ctypes.POINTER(_PMC), wt.DWORD]
+            fn.restype = wt.BOOL
+            if fn(hproc, ctypes.byref(pmc), pmc.cb):
+                return round(pmc.PeakWorkingSetSize / (1024 * 1024), 2)
     except (AttributeError, OSError):
         pass
     return 0.0
@@ -241,6 +247,8 @@ def main() -> int:
     name_index = CorpusNameIndex()
     all_clues: list[RecordClues] = []
     local_firsts: dict[str, set[str]] = {}
+    field_tier_counts: Counter[str] = Counter()
+    stage_trace: list[dict[str, object]] = []
 
     for path in sorted(p for p in inp.rglob("*") if p.is_file()):
         try:
@@ -270,6 +278,8 @@ def main() -> int:
                 item["rows"] = rows
                 if rows:
                     header, body = rows[0], rows[1:]
+                    for h in header:
+                        field_tier_counts[classify_field_tier(h).category.value] += 1
                     col_kinds = [classify_field(h) for h in header]
                     item["col_kinds"] = col_kinds
                     for i, row in enumerate(body):
@@ -370,9 +380,12 @@ def main() -> int:
 
         parsed_files.append(item)
 
+    stage_trace.append({"stage": "ingestion_and_extraction", "status": "ok", "files": len(parsed_files), "records": len(all_clues)})
+
     # Resolve patient clusters globally
     cluster_map = resolve_identities(all_clues)
     clues_by_rid = {c.record_id: c for c in all_clues}
+    stage_trace.append({"stage": "identity_resolution", "status": "ok", "clusters": len({v for v in cluster_map.values() if v})})
 
     # Share first names across records in the same patient cluster (for notes like "Irfan ka BP")
     cluster_firsts: dict[str, set[str]] = {}
@@ -415,6 +428,7 @@ def main() -> int:
         )
     pre_attack = simulate_attacks(pre_profiles, min_group_size=min_group)
     pre_risk = evaluate_corpus_risk(pre_profiles, POLICY)
+    stage_trace.append({"stage": "pre_mitigation_risk_and_attack", "status": "ok", "uniquely_distinguishable": pre_attack.uniquely_distinguishable_records})
     post_profiles: list[RecordProfile] = []
     mitigation_actions: Counter[str] = Counter()
 
@@ -655,6 +669,7 @@ def main() -> int:
     )
     util_metrics = ClinicalUtilityMetrics(records_processed=len(records), records_linked=n_linked)
     gate = evaluate_release_gate(priv_metrics, util_metrics, post_risk, pre_attack, post_attack, POLICY)
+    stage_trace.append({"stage": "sanitization_validation_and_gate", "status": gate.status, "fhir_bundles": fhir_bundles_checked})
 
     report = {
         "schema": "raksha-report/1",
@@ -695,6 +710,8 @@ def main() -> int:
                 "note": "estimated_risk_score is a structural index (0-100), distinct from measured group size k",
             },
             "mitigation_actions": dict(sorted(mitigation_actions.items())),
+            "field_tier_counts": dict(sorted(field_tier_counts.items())),
+            "stage_trace": stage_trace,
         },
         "clinical_integrity": {
             "fhir_bundles_checked": fhir_bundles_checked,
