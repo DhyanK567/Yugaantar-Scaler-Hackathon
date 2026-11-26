@@ -1224,10 +1224,228 @@ def download_privacy_assessment_pdf(
     )
 
 
+def _build_clinical_drift_summary(clinical_row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not clinical_row:
+        return {"status": "NOT_MEASURED", "categories": [], "critical_failures": []}
+    try:
+        details = json.loads(clinical_row.get("details_json") or "{}")
+    except Exception:
+        details = {}
+    raw_cats = details.get("categories") or {}
+    if not raw_cats:
+        return {"status": "NOT_MEASURED", "categories": [], "critical_failures": []}
+
+    cat_specs = [
+        ("dosages", "Medication Dosages"),
+        ("medication_names", "Medication Names"),
+        ("blood_pressure", "Blood Pressure"),
+        ("heart_rate", "Heart Rate"),
+        ("temperature", "Temperature"),
+        ("spo2", "SpO2 / Oxygen"),
+        ("laboratory_measurements", "Lab / Glucose & Biomarkers"),
+    ]
+    categories: List[Dict[str, Any]] = []
+    for key, label in cat_specs:
+        c = raw_cats.get(key)
+        if not isinstance(c, dict):
+            categories.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "input_count": 0,
+                    "output_count": 0,
+                    "preserved_count": 0,
+                    "modified_count": 0,
+                    "missing_count": 0,
+                    "drift_detected": False,
+                    "status": "NOT_MEASURED",
+                }
+            )
+            continue
+        expected = int(c.get("expected", 0))
+        preserved = int(c.get("preserved", 0))
+        modified = int(c.get("modified", 0))
+        missing = int(c.get("missing", 0))
+        unexpected = int(c.get("unexpected", 0))
+        output_count = preserved + unexpected
+        if expected == 0 and output_count == 0:
+            st = "NOT_MEASURED"
+            drift_detected = False
+        elif modified > 0 or missing > 0:
+            st = "DRIFT_DETECTED"
+            drift_detected = True
+        else:
+            st = "PRESERVED"
+            drift_detected = False
+        categories.append(
+            {
+                "key": key,
+                "label": label,
+                "input_count": expected,
+                "output_count": output_count,
+                "preserved_count": preserved,
+                "modified_count": modified,
+                "missing_count": missing,
+                "drift_detected": drift_detected,
+                "status": st,
+            }
+        )
+    return {
+        "status": "MEASURED",
+        "categories": categories,
+        "critical_failures": details.get("critical_failures") or [],
+    }
+
+
+def _build_attack_overview(attack_row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not attack_row:
+        return {
+            "status": "NOT_EXECUTED",
+            "run_id": None,
+            "profile": None,
+            "risk_score": None,
+            "total": 0,
+            "blocked": 0,
+            "exposed": 0,
+            "not_executed": 0,
+            "failed": 0,
+            "inconclusive": 0,
+            "strategies": [],
+        }
+    try:
+        parsed = json.loads(attack_row.get("results_json") or "{}")
+    except Exception:
+        parsed = {}
+    raw_strategies = parsed.get("strategies") or []
+    strategies: List[Dict[str, Any]] = []
+    counts = {"BLOCKED": 0, "EXPOSED": 0, "NOT_EXECUTED": 0, "FAILED": 0, "INCONCLUSIVE": 0}
+    for s in raw_strategies:
+        raw_status = str(s.get("status") or "").upper()
+        if raw_status in ("BLOCKED", "PASS", "DEFENDED"):
+            norm = "BLOCKED"
+        elif raw_status in ("EXPOSED", "REIDENTIFIED", "VULNERABLE", "BREACHED"):
+            norm = "EXPOSED"
+        elif raw_status in ("NOT_EXECUTED", "NOT_RUN", "SKIPPED"):
+            norm = "NOT_EXECUTED"
+        elif raw_status in ("FAILED", "ERROR"):
+            norm = "FAILED"
+        else:
+            norm = "INCONCLUSIVE"
+        counts[norm] += 1
+        strategies.append(
+            {
+                "strategy": s.get("strategy") or s.get("name") or "Unknown Vector",
+                "status": norm,
+                "matched_records": int(s.get("matched_records", 0)),
+                "risk_score": float(s.get("risk_score", 0.0)),
+                "details": s.get("details") or "",
+            }
+        )
+    return {
+        "status": "MEASURED" if strategies else "NOT_EXECUTED",
+        "run_id": attack_row.get("id"),
+        "profile": attack_row.get("profile"),
+        "risk_score": attack_row.get("risk_score"),
+        "total": len(strategies),
+        "blocked": counts["BLOCKED"],
+        "exposed": counts["EXPOSED"],
+        "not_executed": counts["NOT_EXECUTED"],
+        "failed": counts["FAILED"],
+        "inconclusive": counts["INCONCLUSIVE"],
+        "strategies": strategies,
+    }
+
+
 @app.get("/api/privacy-intelligence")
-def get_privacy_intelligence(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+def get_privacy_intelligence(
+    job_id: Optional[str] = Query(default=None),
+    user: Dict[str, Any] = Depends(require_user),
+) -> Dict[str, Any]:
+    org_ids = _authorised_org_ids(user)
+    where_org, params = _org_filter_clause(org_ids, "j.organisation_id")
+    with get_db() as conn:
+        job_rows = [
+            dict(r)
+            for r in conn.execute(
+                f"""
+                SELECT j.id, j.dataset_id, j.organisation_id, j.status, j.release_decision,
+                       j.files_total, j.files_sanitized, j.files_quarantined,
+                       j.records_processed, j.identifiers_detected, j.created_at, j.completed_at,
+                       d.name as dataset_name, o.name as organisation_name
+                FROM jobs j
+                LEFT JOIN datasets d ON j.dataset_id = d.id
+                LEFT JOIN organisations o ON j.organisation_id = o.id
+                WHERE {where_org}
+                ORDER BY j.created_at DESC
+                LIMIT 25
+                """,
+                params,
+            ).fetchall()
+        ]
+
     assessments = list_privacy_assessments(user)
-    if not assessments:
+    selected_job: Optional[Dict[str, Any]] = None
+    if job_id:
+        for j in job_rows:
+            if j["id"] == job_id:
+                selected_job = j
+                break
+        if not selected_job:
+            raise HTTPException(status_code=404, detail="Job not found or access denied")
+    elif assessments:
+        target_jid = assessments[0]["job_id"]
+        selected_job = next((j for j in job_rows if j["id"] == target_jid), None) or (job_rows[0] if job_rows else None)
+    elif job_rows:
+        selected_job = job_rows[0]
+
+    selected_job_id = selected_job["id"] if selected_job else None
+    selected_assessment = (
+        next((a for a in assessments if a["job_id"] == selected_job_id), None)
+        if selected_job_id
+        else (assessments[0] if assessments else None)
+    )
+
+    clinical_row: Optional[Dict[str, Any]] = None
+    attack_row: Optional[Dict[str, Any]] = None
+    if selected_job_id:
+        with get_db() as conn:
+            c_row = conn.execute("SELECT * FROM clinical_reports WHERE job_id = ?", (selected_job_id,)).fetchone()
+            if c_row:
+                clinical_row = dict(c_row)
+            a_row = conn.execute(
+                "SELECT * FROM attack_runs WHERE job_id = ? ORDER BY created_at DESC LIMIT 1",
+                (selected_job_id,),
+            ).fetchone()
+            if a_row:
+                attack_row = dict(a_row)
+
+    clinical_drift = _build_clinical_drift_summary(clinical_row)
+    attack_overview = _build_attack_overview(attack_row)
+
+    if clinical_row:
+        try:
+            c_det = json.loads(clinical_row.get("details_json") or "{}")
+        except Exception:
+            c_det = {}
+        clinical_fidelity: Dict[str, Any] = {
+            "status": "MEASURED",
+            "expected_values": int(clinical_row.get("expected_values", 0)),
+            "preserved_values": int(clinical_row.get("preserved_values", 0)),
+            "modified_values": int(clinical_row.get("modified_values", 0)),
+            "missing_values": int(clinical_row.get("missing_values", 0)),
+            "exact_fidelity_pct": c_det.get("exact_fidelity_pct"),
+            "lab_integrity": clinical_row.get("lab_integrity"),
+            "medication_integrity": clinical_row.get("medication_integrity"),
+            "dosage_integrity": clinical_row.get("dosage_integrity"),
+            "vital_integrity": clinical_row.get("vital_integrity"),
+            "fhir_integrity": clinical_row.get("fhir_integrity") or "NOT_MEASURED",
+            "fhir_bundles_checked": int(c_det.get("fhir_bundles_checked", 0)),
+            "fhir_bundles_valid": int(c_det.get("fhir_bundles_valid", 0)),
+        }
+    else:
+        clinical_fidelity = {"status": "NOT_MEASURED"}
+
+    if not assessments and not selected_job:
         return {
             "status": "NOT_MEASURED",
             "assessments_count": 0,
@@ -1235,25 +1453,177 @@ def get_privacy_intelligence(user: Dict[str, Any] = Depends(require_user)) -> Di
             "total_residual_leakage": 0,
             "canary_status": "NOT_RUN",
             "reid_risk_level": "NOT_MEASURED",
+            "risk_map": None,
             "assessments": [],
+            "jobs": [],
+            "selected_job_id": None,
+            "selected_job": None,
+            "clinical_fidelity": clinical_fidelity,
+            "clinical_drift": clinical_drift,
+            "attack_overview": attack_overview,
+            "before_after": {"status": "NOT_MEASURED"},
+            "release_readiness": {"status": "NOT_MEASURED", "reasons": ["No dataset processing jobs recorded yet."]},
+            "last_updated": None,
         }
-    latest = assessments[0]
+
     risk_map = None
-    try:
-        det = json.loads(latest.get("details_json") or "{}")
-        risk_map = det.get("risk_map")
-    except Exception:
-        risk_map = None
+    if selected_assessment:
+        try:
+            det = json.loads(selected_assessment.get("details_json") or "{}")
+            risk_map = det.get("risk_map")
+        except Exception:
+            risk_map = None
+
+    pii_det = int(selected_assessment["pii_detected"]) if selected_assessment else int((selected_job or {}).get("identifiers_detected") or 0)
+    res_leak = int(selected_assessment["residual_leakage"]) if selected_assessment else 0
+    canary_st = selected_assessment["canary_status"] if selected_assessment else "NOT_RUN"
+    reid_lvl = selected_assessment["reid_risk_level"] if selected_assessment else "NOT_MEASURED"
+
+    before_after = {
+        "status": "MEASURED" if selected_assessment else "NOT_MEASURED",
+        "before_pii_detected": pii_det,
+        "after_residual_leakage": res_leak,
+        "canary_planted": int(selected_assessment["canary_planted"]) if selected_assessment else 0,
+        "canary_leaks": int(selected_assessment["canary_leaks"]) if selected_assessment else 0,
+        "pre_risk_categories": (risk_map or {}).get("pre_categories") or {},
+        "post_risk_categories": (risk_map or {}).get("post_categories") or {},
+        "reid_risk_level": reid_lvl,
+    }
+
+    rel_dec = str((selected_job or {}).get("release_decision") or "PENDING").upper()
+    readiness_reasons: List[str] = []
+    if rel_dec == "BLOCKED" or canary_st == "FAILED" or res_leak > 0 or attack_overview["exposed"] > 0:
+        readiness_status = "BLOCKED"
+        if canary_st == "FAILED":
+            readiness_reasons.append("Canary leakage detected; release strictly blocked.")
+        if res_leak > 0:
+            readiness_reasons.append(f"Residual PII leakage ({res_leak}) detected in sanitized output.")
+        if attack_overview["exposed"] > 0:
+            readiness_reasons.append(f"{attack_overview['exposed']} attack vector(s) exposed records.")
+        if not readiness_reasons:
+            readiness_reasons.append("Release gate blocked output due to privacy or integrity policy violation.")
+    elif rel_dec in ("APPROVED_WITH_WARNINGS", "QUARANTINED") or ((selected_job or {}).get("files_quarantined") or 0) > 0:
+        readiness_status = "PASS_WITH_WARNINGS"
+        if ((selected_job or {}).get("files_quarantined") or 0) > 0:
+            readiness_reasons.append(
+                f"{selected_job['files_quarantined']} file(s) quarantined; remaining output passed privacy & clinical checks."
+            )
+        else:
+            readiness_reasons.append("Approved with non-blocking advisory warnings.")
+    elif rel_dec == "APPROVED":
+        readiness_status = "PASS"
+        readiness_reasons.append("All privacy, canary, clinical integrity, and release gate checks passed.")
+    else:
+        readiness_status = "NOT_MEASURED"
+        readiness_reasons.append(f"Job release decision is currently {rel_dec}.")
+
+    last_updated = (
+        (selected_job or {}).get("completed_at")
+        or (selected_assessment or {}).get("created_at")
+        or (selected_job or {}).get("created_at")
+    )
 
     return {
-        "status": "MEASURED",
+        "status": "MEASURED" if selected_assessment else "NOT_MEASURED",
         "assessments_count": len(assessments),
         "total_pii_detected": sum(int(a["pii_detected"]) for a in assessments),
         "total_residual_leakage": sum(int(a["residual_leakage"]) for a in assessments),
-        "canary_status": latest["canary_status"],
-        "reid_risk_level": latest["reid_risk_level"],
+        "canary_status": canary_st,
+        "reid_risk_level": reid_lvl,
         "risk_map": risk_map,
         "assessments": assessments,
+        "jobs": job_rows,
+        "selected_job_id": selected_job_id,
+        "selected_job": selected_job,
+        "clinical_fidelity": clinical_fidelity,
+        "clinical_drift": clinical_drift,
+        "attack_overview": attack_overview,
+        "before_after": before_after,
+        "release_readiness": {
+            "status": readiness_status,
+            "decision": rel_dec,
+            "reasons": readiness_reasons,
+        },
+        "last_updated": last_updated,
+    }
+
+
+@app.get("/api/quarantine")
+def list_quarantined_files(
+    job_id: Optional[str] = Query(default=None),
+    user: Dict[str, Any] = Depends(require_user),
+) -> Dict[str, Any]:
+    """Return safe, PII-free metadata for quarantined files across authorised organisations."""
+    org_ids = _authorised_org_ids(user)
+    where_org, params = _org_filter_clause(org_ids, "j.organisation_id")
+    query = f"""
+        SELECT j.id as job_id, j.dataset_id, j.organisation_id, j.files_quarantined,
+               j.created_at, j.completed_at, j.summary_json,
+               d.name as dataset_name, o.name as organisation_name
+        FROM jobs j
+        LEFT JOIN datasets d ON j.dataset_id = d.id
+        LEFT JOIN organisations o ON j.organisation_id = o.id
+        WHERE {where_org}
+    """
+    if job_id:
+        query += " AND j.id = ?"
+        params = list(params) + [job_id]
+    query += " ORDER BY j.created_at DESC LIMIT 50"
+
+    with get_db() as conn:
+        rows = [dict(r) for r in conn.execute(query, params).fetchall()]
+
+    items: List[Dict[str, Any]] = []
+    jobs_with_quarantine = 0
+    for row in rows:
+        q_count = int(row.get("files_quarantined") or 0)
+        try:
+            summary = json.loads(row.get("summary_json") or "{}")
+        except Exception:
+            summary = {}
+        q_files = summary.get("quarantined_files") or []
+        if q_count > 0 or q_files:
+            jobs_with_quarantine += 1
+        if q_files:
+            for item in q_files:
+                items.append(
+                    {
+                        **item,
+                        "dataset_name": row.get("dataset_name") or "Synthetic Dataset",
+                        "organisation_name": row.get("organisation_name") or "Default Org",
+                        "download_allowed": False,
+                    }
+                )
+        elif q_count > 0:
+            items.append(
+                {
+                    "quarantine_id": f"qrn-{row['job_id'][-6:]}-001",
+                    "opaque_ref": f"QRN-{row['job_id'][-8:].upper()}",
+                    "job_id": row["job_id"],
+                    "dataset_id": row.get("dataset_id"),
+                    "dataset_name": row.get("dataset_name") or "Synthetic Dataset",
+                    "organisation_name": row.get("organisation_name") or "Default Org",
+                    "file_type": "unknown",
+                    "size_bytes": None,
+                    "quarantined_at": row.get("completed_at") or row.get("created_at"),
+                    "stage_failed": "SANITIZATION_PIPELINE",
+                    "error_code": "ERR_POLICY_QUARANTINE",
+                    "reason": f"{q_count} file(s) isolated by MediLocker quarantine policy.",
+                    "recommended_action": "Review dataset formatting and compliance rules with a Privacy Officer.",
+                    "retry_safe": False,
+                    "resolution_status": "QUARANTINED_PENDING_REVIEW",
+                    "requires_manual_review": True,
+                    "download_allowed": False,
+                }
+            )
+
+    pending_review_count = sum(1 for i in items if i.get("requires_manual_review"))
+    return {
+        "status": "OK",
+        "total_quarantined": len(items),
+        "jobs_with_quarantine": jobs_with_quarantine,
+        "pending_review_count": pending_review_count,
+        "items": items,
     }
 
 

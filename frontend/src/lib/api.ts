@@ -227,6 +227,18 @@ export interface PrivacyRiskMap {
   release_decision?: string;
 }
 
+export interface ClinicalDriftCategory {
+  key: string;
+  label: string;
+  input_count: number;
+  output_count: number;
+  preserved_count: number;
+  modified_count: number;
+  missing_count: number;
+  drift_detected: boolean;
+  status: "PRESERVED" | "DRIFT_DETECTED" | "NOT_MEASURED";
+}
+
 export interface PrivacyIntelligence {
   status: "MEASURED" | "NOT_MEASURED";
   assessments_count: number;
@@ -236,6 +248,116 @@ export interface PrivacyIntelligence {
   reid_risk_level: string;
   risk_map?: PrivacyRiskMap | null;
   assessments: PrivacyAssessment[];
+  jobs?: {
+    id: string;
+    dataset_id?: string;
+    dataset_name?: string;
+    organisation_name?: string;
+    status: string;
+    release_decision: string;
+    files_total: number;
+    files_sanitized: number;
+    files_quarantined: number;
+    records_processed: number;
+    identifiers_detected: number;
+    created_at: number;
+    completed_at?: number;
+  }[];
+  selected_job_id?: string | null;
+  selected_job?: {
+    id: string;
+    dataset_name?: string;
+    organisation_name?: string;
+    status: string;
+    release_decision: string;
+    files_total: number;
+    files_sanitized: number;
+    files_quarantined: number;
+    records_processed: number;
+  } | null;
+  clinical_fidelity?: {
+    status: "MEASURED" | "NOT_MEASURED";
+    expected_values?: number;
+    preserved_values?: number;
+    modified_values?: number;
+    missing_values?: number;
+    exact_fidelity_pct?: number | null;
+    lab_integrity?: number | null;
+    medication_integrity?: number | null;
+    dosage_integrity?: number | null;
+    vital_integrity?: number | null;
+    fhir_integrity?: string;
+    fhir_bundles_checked?: number;
+    fhir_bundles_valid?: number;
+  };
+  clinical_drift?: {
+    status: "MEASURED" | "NOT_MEASURED";
+    categories: ClinicalDriftCategory[];
+    critical_failures?: string[];
+  };
+  attack_overview?: {
+    status: "MEASURED" | "NOT_EXECUTED";
+    run_id?: string | null;
+    profile?: string | null;
+    risk_score?: number | null;
+    total: number;
+    blocked: number;
+    exposed: number;
+    not_executed: number;
+    failed: number;
+    inconclusive: number;
+    strategies: {
+      strategy: string;
+      status: "BLOCKED" | "EXPOSED" | "NOT_EXECUTED" | "FAILED" | "INCONCLUSIVE";
+      matched_records: number;
+      risk_score: number;
+      details?: string;
+    }[];
+  };
+  before_after?: {
+    status: "MEASURED" | "NOT_MEASURED";
+    before_pii_detected?: number;
+    after_residual_leakage?: number;
+    canary_planted?: number;
+    canary_leaks?: number;
+    pre_risk_categories?: Record<string, number>;
+    post_risk_categories?: Record<string, number>;
+    reid_risk_level?: string;
+  };
+  release_readiness?: {
+    status: "PASS" | "PASS_WITH_WARNINGS" | "BLOCKED" | "NOT_MEASURED";
+    decision?: string;
+    reasons: string[];
+  };
+  last_updated?: number | null;
+}
+
+export interface QuarantineItem {
+  quarantine_id: string;
+  opaque_ref: string;
+  job_id: string;
+  dataset_id?: string | null;
+  dataset_name?: string;
+  organisation_name?: string;
+  file_type: string;
+  size_bytes?: number | null;
+  quarantined_at?: number | null;
+  stage_failed: string;
+  error_code: string;
+  reason: string;
+  recommended_action: string;
+  retry_safe: boolean;
+  resolution_status: string;
+  requires_manual_review: boolean;
+  download_allowed: boolean;
+}
+
+export interface QuarantineSummary {
+  status: string;
+  total_quarantined: number;
+  jobs_with_quarantine: number;
+  pending_review_count: number;
+  items: QuarantineItem[];
 }
 
 export interface IdentityGraph {
@@ -399,7 +521,14 @@ export const api = {
   downloadJobUrl: (jobId: string) => `${API_BASE}/api/jobs/${jobId}/download`,
 
   // Privacy, Identity, Clinical, Attack
-  privacyIntelligence: () => request<PrivacyIntelligence>("/api/privacy-intelligence"),
+  privacyIntelligence: (jobId?: string) =>
+    request<PrivacyIntelligence>(
+      jobId ? `/api/privacy-intelligence?job_id=${encodeURIComponent(jobId)}` : "/api/privacy-intelligence"
+    ),
+  quarantine: (jobId?: string) =>
+    request<QuarantineSummary>(
+      jobId ? `/api/quarantine?job_id=${encodeURIComponent(jobId)}` : "/api/quarantine"
+    ),
   identityGraph: (jobId?: string) =>
     request<IdentityGraph>(jobId ? `/api/identity/clusters?job_id=${encodeURIComponent(jobId)}` : "/api/identity/clusters"),
   clinicalReports: () => request<ClinicalReport[]>("/api/clinical/reports"),
