@@ -1238,6 +1238,13 @@ def get_privacy_intelligence(user: Dict[str, Any] = Depends(require_user)) -> Di
             "assessments": [],
         }
     latest = assessments[0]
+    risk_map = None
+    try:
+        det = json.loads(latest.get("details_json") or "{}")
+        risk_map = det.get("risk_map")
+    except Exception:
+        risk_map = None
+
     return {
         "status": "MEASURED",
         "assessments_count": len(assessments),
@@ -1245,6 +1252,7 @@ def get_privacy_intelligence(user: Dict[str, Any] = Depends(require_user)) -> Di
         "total_residual_leakage": sum(int(a["residual_leakage"]) for a in assessments),
         "canary_status": latest["canary_status"],
         "reid_risk_level": latest["reid_risk_level"],
+        "risk_map": risk_map,
         "assessments": assessments,
     }
 
@@ -1469,10 +1477,39 @@ def verify_passport(
     passport_id: str, request: Request, user: Dict[str, Any] = Depends(require_user)
 ) -> Dict[str, Any]:
     data = get_passport(passport_id, user)
-    recomputed = hashlib.sha256(
-        json.dumps(data["payload"], sort_keys=True).encode("utf-8")
-    ).hexdigest()
-    integrity_ok = recomputed == data["manifest_hash"]
+    job_id = data.get("job_id")
+    job_out = (JOBS_DIR / job_id / "output") if job_id else None
+    disk_passport = (job_out / "privacy_passport.json") if job_out else None
+
+    verification_details: List[str] = []
+    if disk_passport and disk_passport.is_file():
+        import sys as _sys
+        if str(STARTER_DIR) not in _sys.path:
+            _sys.path.insert(0, str(STARTER_DIR))
+        from verify_passport import verify_passport_bundle  # type: ignore
+
+        manifest_path = job_out / "dataset_manifest.json"
+        vres = verify_passport_bundle(
+            passport_path=disk_passport,
+            output_dir=job_out,
+            manifest_path=manifest_path if manifest_path.is_file() else None,
+        )
+        disk_root = (
+            (data["payload"].get("dataset_provenance") or {}).get("output_dataset_root_hash")
+            or data["manifest_hash"]
+        )
+        integrity_ok = bool(vres.get("valid")) and (disk_root == data["manifest_hash"])
+        verification_details = list(vres.get("details") or [])
+        if disk_root != data["manifest_hash"]:
+            integrity_ok = False
+            verification_details.append("Stored DB manifest_hash does not match passport payload.")
+    else:
+        recomputed = hashlib.sha256(
+            json.dumps(data["payload"], sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        integrity_ok = recomputed == data["manifest_hash"]
+        verification_details = ["Canonical payload SHA-256 verified." if integrity_ok else "Canonical payload SHA-256 mismatch."]
+
     now = time.time()
     if integrity_ok:
         with get_db() as conn:
@@ -1493,6 +1530,7 @@ def verify_passport(
         "integrity_valid": integrity_ok,
         "signature_status": data["signature_status"],
         "manifest_hash": data["manifest_hash"],
+        "details": verification_details,
         "verified_at": now if integrity_ok else None,
     }
 

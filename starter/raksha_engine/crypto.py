@@ -41,6 +41,58 @@ KEY_PURPOSE_ENCRYPTION = b"guptkavach:v1:aes-256-gcm-storage"
 KEY_PURPOSE_INTEGRITY = b"guptkavach:v1:hmac-integrity-check"
 KEY_PURPOSE_QUARANTINE = b"guptkavach:v1:quarantine-vault"
 
+# RFC 5869 HKDF-SHA256 domain separation labels
+HKDF_DOMAIN_PSEUDONYM = b"medilocker:v1:patient-pseudonym"
+HKDF_DOMAIN_DATE_SHIFT = b"medilocker:v1:date-shift"
+HKDF_DOMAIN_IDENTITY_LINK = b"medilocker:v1:identity-linking"
+HKDF_DOMAIN_MANIFEST = b"medilocker:v1:manifest-integrity"
+HKDF_DOMAIN_PASSPORT_AUTH = b"medilocker:v1:passport-auth"
+
+
+def hkdf_extract(salt: Optional[bytes], ikm: bytes) -> bytes:
+    """RFC 5869 HKDF-Extract using HMAC-SHA256."""
+    effective_salt = salt if salt else b"\x00" * 32
+    return hmac.new(effective_salt, ikm, hashlib.sha256).digest()
+
+
+def hkdf_expand(prk: bytes, info: bytes, length: int = 32) -> bytes:
+    """RFC 5869 HKDF-Expand using HMAC-SHA256."""
+    if length <= 0 or length > 255 * 32:
+        raise ValueError("Invalid HKDF output length.")
+    okm = b""
+    t = b""
+    counter = 1
+    while len(okm) < length:
+        t = hmac.new(prk, t + info + bytes([counter]), hashlib.sha256).digest()
+        okm += t
+        counter += 1
+    return okm[:length]
+
+
+def hkdf_sha256(ikm: bytes, info: bytes, salt: Optional[bytes] = None, length: int = 32) -> bytes:
+    """Derives an independent purpose-specific key using RFC 5869 HKDF-SHA256."""
+    if not ikm:
+        raise InvalidSecretError("Input keying material (RAKSHA_SECRET) cannot be empty.")
+    prk = hkdf_extract(salt or b"medilocker:hkdf:salt:v1", ikm)
+    return hkdf_expand(prk, info, length=length)
+
+
+def validate_secret(secret: bytes | str, min_length: int = 8) -> bytes:
+    """Validate that a secret is non-empty, well-formed, and meets minimum length."""
+    if isinstance(secret, str):
+        secret_bytes = secret.encode("utf-8")
+    elif isinstance(secret, (bytes, bytearray)):
+        secret_bytes = bytes(secret)
+    else:
+        raise InvalidSecretError("Secret must be bytes or str.")
+    if not secret_bytes or not secret_bytes.strip():
+        raise InvalidSecretError("Secret is missing or empty.")
+    if len(secret_bytes) < min_length:
+        raise InvalidSecretError(f"Secret is too weak (minimum {min_length} bytes required).")
+    if len(set(secret_bytes)) < 3:
+        raise InvalidSecretError("Secret has insufficient character diversity.")
+    return secret_bytes
+
 
 class CryptographicError(Exception):
     """Base exception for all cryptographic failures."""
