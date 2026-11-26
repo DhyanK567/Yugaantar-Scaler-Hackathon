@@ -61,6 +61,46 @@ export default function PrivacyIntelligencePage() {
         </div>
       </div>
 
+      <div className="bg-white border border-[#DADADA] rounded-2xl p-6">
+        <div className="flex items-center justify-between border-b border-[#E5E5E5] pb-3 mb-4">
+          <div>
+            <h2 className="text-[15px] font-semibold text-[#090909]">Dataset Privacy Risk Map</h2>
+            <p className="text-[12px] text-[#666666]">
+              Record-level quasi-identifier risk distribution without exposing original patient records.
+            </p>
+          </div>
+          <StatusBadge status={intel?.risk_map?.release_decision ?? "NOT_MEASURED"} />
+        </div>
+        {!intel?.risk_map ? (
+          <div className="text-[13px] text-[#666666]">NOT_MEASURED — Run a dataset job to populate the risk map.</div>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+              {[
+                { label: "LOW", val: intel.risk_map.low },
+                { label: "MODERATE", val: intel.risk_map.moderate },
+                { label: "HIGH", val: intel.risk_map.high },
+                { label: "CRITICAL", val: intel.risk_map.critical },
+                { label: "ASSESSED", val: intel.risk_map.total_assessed },
+                { label: "MITIGATED", val: intel.risk_map.requiring_mitigation },
+                { label: "BLOCKED", val: intel.risk_map.blocked_from_release },
+              ].map((cell) => (
+                <div key={cell.label} className="bg-[#F4F4F2] border border-[#E5E5E5] rounded-xl p-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-[#666666]">{cell.label}</div>
+                  <div className="font-serif-display text-[24px] leading-tight text-[#090909] mt-1">{cell.val}</div>
+                </div>
+              ))}
+            </div>
+            {intel.risk_map.safe_explanations && intel.risk_map.safe_explanations.length > 0 && (
+              <div className="text-[12px] text-[#444444]">
+                <span className="font-semibold text-[#090909]">Safe Explanations:</span>{" "}
+                {intel.risk_map.safe_explanations.join(", ")}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       <div className="bg-white border border-[#DADADA] rounded-2xl overflow-hidden">
         <div className="px-6 py-4 border-b border-[#E5E5E5]">
           <h2 className="text-[15px] font-semibold text-[#090909]">
