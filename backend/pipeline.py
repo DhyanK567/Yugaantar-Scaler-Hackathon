@@ -173,6 +173,128 @@ def _evaluate_clinical_integrity(input_dir: Path, sanitized_dir: Path) -> Dict[s
     }
 
 
+def _classify_quarantine_reason(raw_reason: str) -> Tuple[str, str, str, bool, str]:
+    """Map raw quarantine reason to safe error_code, human_reason, stage, retry_safe, next_action."""
+    lower = (raw_reason or "").lower()
+    if any(k in lower for k in ("malformed", "parse", "json", "csv", "decode", "utf", "encoding", "syntax")):
+        return (
+            "ERR_MALFORMED_STRUCTURE",
+            "File could not be parsed cleanly into structured clinical records.",
+            "INGESTION_PARSE",
+            True,
+            "Validate UTF-8 encoding and schema structure before re-uploading.",
+        )
+    if any(k in lower for k in ("unsupported", "extension", "binary", "mime", "format")):
+        return (
+            "ERR_UNSUPPORTED_FORMAT",
+            "File format is not in the supported healthcare ingestion allowlist.",
+            "FORMAT_VALIDATION",
+            False,
+            "Convert input to supported CSV, JSON, JSONL, FHIR R4, or TXT format.",
+        )
+    if any(k in lower for k in ("canary", "leak", "residual", "privacy", "pii")):
+        return (
+            "ERR_PRIVACY_GATE_QUARANTINE",
+            "File triggered residual privacy or canary protection rules and was isolated.",
+            "PRIVACY_GATE",
+            False,
+            "Inspect source dataset generation rules; do not release raw file.",
+        )
+    if any(k in lower for k in ("empty", "size", "oversize", "limit")):
+        return (
+            "ERR_EMPTY_OR_OVERSIZED",
+            "File was empty or exceeded safe processing boundaries.",
+            "INPUT_VALIDATION",
+            True,
+            "Verify non-empty content and file size limits, then re-submit.",
+        )
+    return (
+        "ERR_POLICY_QUARANTINE",
+        "File was isolated by the MediLocker quarantine policy during automated processing.",
+        "SANITIZATION_PIPELINE",
+        False,
+        "Review dataset formatting and compliance rules with a Privacy Officer.",
+    )
+
+
+def _build_safe_quarantine_records(
+    job_id: str,
+    dataset_id: Optional[str],
+    organisation_id: Optional[str],
+    files_report: List[Dict[str, Any]],
+    files_quarantined: int,
+    input_dir: Path,
+    now: float,
+) -> List[Dict[str, Any]]:
+    """Build safe, PII-free metadata records for quarantined files."""
+    records: List[Dict[str, Any]] = []
+    for idx, item in enumerate(files_report):
+        if str(item.get("status") or "").lower() != "quarantined":
+            continue
+        raw_rel = str(item.get("rel") or item.get("file") or "")
+        ext = Path(raw_rel).suffix.lower() if raw_rel else ""
+        file_type = ext.lstrip(".") if ext and len(ext) <= 10 and ext[1:].isalnum() else "unknown"
+        digest = str(
+            item.get("input_sha256")
+            or hashlib.sha256(f"{job_id}:{idx}:{file_type}".encode("utf-8")).hexdigest()
+        )
+        size_bytes: Optional[int] = None
+        if raw_rel:
+            candidate = input_dir / raw_rel
+            try:
+                if candidate.is_file():
+                    size_bytes = int(candidate.stat().st_size)
+            except Exception:
+                size_bytes = None
+        err_code, human_reason, stage_failed, retry_safe, next_action = _classify_quarantine_reason(
+            str(item.get("reason") or "")
+        )
+        records.append(
+            {
+                "quarantine_id": f"qrn-{job_id[-6:]}-{idx + 1:03d}",
+                "opaque_ref": f"QRN-{digest[:10].upper()}",
+                "job_id": job_id,
+                "dataset_id": dataset_id,
+                "organisation_id": organisation_id,
+                "file_type": file_type,
+                "size_bytes": size_bytes,
+                "quarantined_at": now,
+                "stage_failed": stage_failed,
+                "error_code": err_code,
+                "reason": human_reason,
+                "recommended_action": next_action,
+                "retry_safe": retry_safe,
+                "resolution_status": "QUARANTINED_PENDING_REVIEW",
+                "requires_manual_review": True,
+                "download_allowed": False,
+            }
+        )
+
+    if not records and files_quarantined > 0:
+        digest = hashlib.sha256(f"{job_id}:summary".encode("utf-8")).hexdigest()
+        records.append(
+            {
+                "quarantine_id": f"qrn-{job_id[-6:]}-001",
+                "opaque_ref": f"QRN-{digest[:10].upper()}",
+                "job_id": job_id,
+                "dataset_id": dataset_id,
+                "organisation_id": organisation_id,
+                "file_type": "unknown",
+                "size_bytes": None,
+                "quarantined_at": now,
+                "stage_failed": "SANITIZATION_PIPELINE",
+                "error_code": "ERR_POLICY_QUARANTINE",
+                "reason": f"{files_quarantined} file(s) isolated by MediLocker quarantine policy.",
+                "recommended_action": "Review dataset formatting and compliance rules with a Privacy Officer.",
+                "retry_safe": False,
+                "resolution_status": "QUARANTINED_PENDING_REVIEW",
+                "requires_manual_review": True,
+                "download_allowed": False,
+            }
+        )
+    return records
+
+
 def _build_record_profiles(records_file: Path) -> List[RecordProfile]:
     profiles: List[RecordProfile] = []
     if not records_file.exists():
@@ -477,6 +599,16 @@ def execute_job_pipeline(
                 json.dumps(passport_payload, sort_keys=True).encode("utf-8")
             ).hexdigest()
 
+        quarantined_records = _build_safe_quarantine_records(
+            job_id=job_id,
+            dataset_id=dataset_id,
+            organisation_id=organisation_id,
+            files_report=result.get("files_report") or [],
+            files_quarantined=files_quarantined,
+            input_dir=input_dir,
+            now=now,
+        )
+
         with get_db() as conn:
             conn.execute(
                 """
@@ -499,7 +631,13 @@ def execute_job_pipeline(
                     result["records_linked"],
                     pii_detected,
                     release_decision,
-                    json.dumps({"report_sha256": report_hash, "canary": canary_info}),
+                    json.dumps(
+                        {
+                            "report_sha256": report_hash,
+                            "canary": canary_info,
+                            "quarantined_files": quarantined_records,
+                        }
+                    ),
                     job_id,
                 ),
             )
