@@ -49,6 +49,14 @@ from raksha_engine.sanitizer import (
     sanitize_structured_cell,
 )
 from raksha_engine.crypto import GuptKavachKeyRing, InvalidSecretError
+from raksha_engine.passport import (
+    PassportEvidenceInput,
+    assert_no_sensitive_data,
+    build_dataset_manifest,
+    build_privacy_passport,
+    load_signing_key,
+)
+from raksha_engine.passport_report import render_passport_html
 from raksha_engine.secure_fs import verify_path_containment
 from raksha_engine.quarantine import QuarantineVault
 
@@ -107,6 +115,8 @@ def load_policy(path: Path) -> dict:
                 k, v = (x.strip() for x in line.split(":", 1))
                 if v.lstrip("-").isdigit():
                     policy[k] = int(v)
+                elif v.lower() in ("true", "false"):
+                    policy[k] = v.lower() == "true"
                 else:
                     try:
                         policy[k] = float(v)
@@ -222,6 +232,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="RAKSHA / GuptKavach privacy pipeline")
     ap.add_argument("--input", required=True)
     ap.add_argument("--output", required=True)
+    ap.add_argument("--signing-key", default=None, help="Optional Ed25519 private key PEM for signing privacy_passport.json")
     a = ap.parse_args()
 
     Stats.identifiers = 0
@@ -247,6 +258,7 @@ def main() -> int:
     name_index = CorpusNameIndex()
     all_clues: list[RecordClues] = []
     local_firsts: dict[str, set[str]] = {}
+    path_traversal_rejected = 0
     field_tier_counts: Counter[str] = Counter()
     stage_trace: list[dict[str, object]] = []
 
@@ -254,6 +266,7 @@ def main() -> int:
         try:
             canonical_path = verify_path_containment(path, inp)
         except Exception:
+            path_traversal_rejected += 1
             continue
         rel = canonical_path.relative_to(inp).as_posix()
         raw = canonical_path.read_bytes()
@@ -725,6 +738,59 @@ def main() -> int:
     report_tmp = out / ".report.json.tmp"
     report_tmp.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     os.replace(report_tmp, out / "report.json")
+
+    # ------------------------------------------------------------------
+    # MILESTONE 15.5: Generate Privacy Passport & Dataset Manifest
+    # ------------------------------------------------------------------
+    manifest = build_dataset_manifest(san)
+    evidence = PassportEvidenceInput(
+        files_report=files_report,
+        records_processed=len(records),
+        records_linked=n_linked,
+        identifiers_detected=Stats.identifiers,
+        generalizations_applied=Stats.generalized,
+        suppressions_applied=Stats.suppressed,
+        pre_attack={
+            "strategies": pre_attack.strategies_run,
+            "pre_uniquely_distinguishable": pre_attack.uniquely_distinguishable_records,
+            "pre_attack_successes": pre_attack.strategy_success_counts,
+        },
+        post_attack={
+            "post_uniquely_distinguishable": post_attack.uniquely_distinguishable_records,
+            "post_attack_successes": post_attack.strategy_success_counts,
+        },
+        pre_risk={
+            "pre_categories": pre_risk.category_counts,
+            "records_below_min_group_pre": pre_risk.records_below_min_group,
+        },
+        post_risk={
+            "post_categories": post_risk.category_counts,
+            "records_below_min_group_post": post_risk.records_below_min_group,
+            "unique_candidate_groups_post": post_risk.unique_candidate_groups,
+        },
+        release_gate=report["privacy_intelligence"]["release_gate"],
+        fhir_bundles_checked=fhir_bundles_checked,
+        fhir_resources_checked=fhir_resources_checked,
+        fhir_validation_passed=len(fhir_failures) == 0,
+        fhir_failures=fhir_failures,
+        policy=POLICY,
+        raksha_secret_configured=bool(SECRET),
+        path_traversal_rejected=path_traversal_rejected,
+    )
+    signing_key = load_signing_key(Path(a.signing_key) if a.signing_key else None)
+    passport = build_privacy_passport(evidence, manifest, signing_key=signing_key)
+
+    manifest_text = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
+    passport_text = json.dumps(passport, indent=2, ensure_ascii=False) + "\n"
+    html_text = render_passport_html(passport)
+
+    assert_no_sensitive_data(manifest_text, SECRET)
+    assert_no_sensitive_data(passport_text, SECRET)
+    assert_no_sensitive_data(html_text, SECRET)
+
+    (out / "dataset_manifest.json").write_text(manifest_text, encoding="utf-8")
+    (out / "privacy_passport.json").write_text(passport_text, encoding="utf-8")
+    (out / "privacy_passport.html").write_text(html_text, encoding="utf-8")
     print(f"files {len(files_report)} sanitized {n_san} quarantined {len(files_report) - n_san} records {len(records)}")
     return 0
 
