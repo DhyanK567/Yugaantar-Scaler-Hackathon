@@ -189,6 +189,7 @@ export interface Dataset {
   created_at: number;
   latest_job_id?: string;
   latest_job_status?: string;
+  latest_release_decision?: string;
   records?: number;
 }
 

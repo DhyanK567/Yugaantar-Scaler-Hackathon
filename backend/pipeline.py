@@ -39,6 +39,8 @@ JOBS_DIR.mkdir(parents=True, exist_ok=True)
 DATASETS_DIR.mkdir(parents=True, exist_ok=True)
 
 CANARY_RE = re.compile(r"CANARY_[A-Z0-9_]+")
+CANARY_LABELED_RE = re.compile(r"(?im)\bcanary(?:_id|_token|_name)?\s*[:=,]\s*([^\n,;|]+)")
+_B64_SCAN_RE = re.compile(r"[A-Za-z0-9+/]{24,}={0,2}")
 CLINICAL_VALUE_RE = re.compile(
     r"\b\d+(?:\.\d+)?\s*(?:mg/dL|mmol/L|g/dL|U/L|IU/L|mg|mcg|mL|bpm|mmHg|%)\b",
     re.IGNORECASE,
@@ -58,14 +60,31 @@ def _record_job_stage(job_id: str, stage: str, status: str, message: str) -> Non
         )
 
 
-def _scan_canaries(input_dir: Path, sanitized_dir: Path) -> Dict[str, Any]:
+def _with_decoded_b64(text: str) -> str:
+    import base64
+    extra: List[str] = []
+    for m in _B64_SCAN_RE.finditer(text):
+        tok = m.group(0)
+        try:
+            extra.append(base64.b64decode(tok + "=" * (-len(tok) % 4)).decode("utf-8", errors="ignore"))
+        except Exception:
+            pass
+    return text + "\n" + "\n".join(extra) if extra else text
+
+
+def _scan_canaries(input_dir: Path, output_dir: Path) -> Dict[str, Any]:
     planted: set[str] = set()
     for p in input_dir.rglob("*"):
         if p.is_file():
             planted.update(CANARY_RE.findall(p.name))
             if p.suffix.lower() in {".txt", ".csv", ".tsv", ".json", ".jsonl"} and p.stat().st_size <= 2_000_000:
                 try:
-                    planted.update(CANARY_RE.findall(p.read_text(encoding="utf-8", errors="ignore")))
+                    raw_txt = _with_decoded_b64(p.read_text(encoding="utf-8", errors="ignore"))
+                    planted.update(CANARY_RE.findall(raw_txt))
+                    for m in CANARY_LABELED_RE.finditer(raw_txt):
+                        val = m.group(1).strip().strip("\"'")
+                        if len(val) >= 4:
+                            planted.add(val)
                 except Exception:
                     pass
 
@@ -73,14 +92,14 @@ def _scan_canaries(input_dir: Path, sanitized_dir: Path) -> Dict[str, Any]:
         return {"planted": 0, "leaks": 0, "status": "NOT_RUN"}
 
     leaked: set[str] = set()
-    if sanitized_dir.exists():
-        for p in sanitized_dir.rglob("*"):
+    if output_dir.exists():
+        for p in output_dir.rglob("*"):
             if p.is_file():
                 for c in planted:
                     if c in p.name:
                         leaked.add(c)
                 try:
-                    txt = p.read_text(encoding="utf-8", errors="ignore")
+                    txt = _with_decoded_b64(p.read_text(encoding="utf-8", errors="ignore"))
                     for c in planted:
                         if c in txt:
                             leaked.add(c)
@@ -331,14 +350,21 @@ def execute_job_pipeline(
 
         # Stage 3: PRIVACY_ANALYSIS
         _record_job_stage(job_id, "PRIVACY_ANALYSIS", "PRIVACY_ANALYSIS", "Evaluating PII detection and canary containment.")
-        canary_info = _scan_canaries(input_dir, sanitized_dir)
+        canary_info = _scan_canaries(input_dir, job_output)
         pii_detected = int(result.get("identifiers_detected", 0))
         residual_leakage = canary_info["leaks"]
-        reid_risk_level = "LOW" if canary_info["leaks"] == 0 else "CRITICAL"
+        engine_pi = result.get("privacy_intelligence") or {}
+        engine_ci = result.get("clinical_integrity") or {}
+        post_cats = (engine_pi.get("risk_summary") or {}).get("post_categories") or {}
+        critical_risk_count = int(post_cats.get("CRITICAL", 0))
+        high_risk_count = int(post_cats.get("HIGH", 0))
+        engine_gate = (engine_pi.get("release_gate") or {}).get("status")
 
         # Stage 4: CLINICAL_VALIDATION
         _record_job_stage(job_id, "CLINICAL_VALIDATION", "CLINICAL_VALIDATION", "Validating clinical value and FHIR R4 integrity.")
         clinical = _evaluate_clinical_integrity(input_dir, sanitized_dir)
+        if engine_ci and engine_ci.get("fhir_validation_passed") is False:
+            clinical["fhir_integrity"] = "FAILED"
 
         # Stage 5: SECURITY_VALIDATION (attack simulator + identity continuity)
         _record_job_stage(job_id, "SECURITY_VALIDATION", "SECURITY_VALIDATION", "Running adversarial attack simulation and identity checks.")
@@ -351,18 +377,26 @@ def execute_job_pipeline(
         )
         id_graph = parse_identity_continuity_graph(job_output)
 
-        # Release Decision logic (evidence-based, never blind green)
+        if canary_info["leaks"] > 0 or critical_risk_count > 0:
+            reid_risk_level = "CRITICAL"
+        elif high_risk_count > 0 or atk_run["risk_score"] > 20.0:
+            reid_risk_level = "HIGH"
+        else:
+            reid_risk_level = "LOW"
+
+        # Release Decision logic (evidence-based, mandatory checks required for APPROVED)
         files_total = int(result.get("files_total", 0))
         files_sanitized = int(result.get("files_sanitized", 0))
         files_quarantined = int(result.get("files_quarantined", 0))
+        artifacts_complete = (job_output / "report.json").exists() and (job_output / "records.jsonl").exists()
 
-        if canary_info["leaks"] > 0:
+        if not artifacts_complete or canary_info["leaks"] > 0 or engine_gate == "BLOCKED" or critical_risk_count > 0 or clinical["fhir_integrity"] == "FAILED":
             final_status = "BLOCKED"
             release_decision = "BLOCKED"
         elif files_total > 0 and files_sanitized == 0 and files_quarantined > 0:
             final_status = "QUARANTINED"
             release_decision = "QUARANTINED"
-        elif files_quarantined > 0 or clinical["missing_values"] > 0 or atk_run["risk_score"] > 20.0:
+        elif files_quarantined > 0 or clinical["missing_values"] > 0 or atk_run["risk_score"] > 20.0 or engine_gate == "PASS_WITH_WARNINGS" or high_risk_count > 0:
             final_status = "COMPLETED_WITH_WARNINGS"
             release_decision = "APPROVED_WITH_WARNINGS"
         else:
