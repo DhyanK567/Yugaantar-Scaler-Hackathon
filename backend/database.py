@@ -1,217 +1,365 @@
-"""SQLite Database Layer for GuptKavach / MediLocker Single Source of Truth.
-Stores only non-sensitive operational metadata (IDs, hashes, timestamps, policy versions,
-assessment summaries, release decisions, synthetic orgs, research requests, and audit events).
-Never stores RAKSHA_SECRET or raw patient identifiers.
+"""SQLite Database Layer & Migrations for MediLocker Platform.
+Stores only non-sensitive operational metadata, hashed credentials/OTPs, and assessment results.
+Never stores RAKSHA_SECRET, plaintext OTPs, or raw patient identifiers.
 """
 from __future__ import annotations
 
 import json
 import os
-import re
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "guptkavach.db"
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-_RX_RAW_AADHAAR = re.compile(r"(?<!\d)\d{4}[\s-]?\d{4}[\s-]?\d{4}(?!\d)")
-_RX_RAW_PHONE = re.compile(r"(?:\+91[\s-]?)?[6-9]\d{9}\b")
-_RX_RAW_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "guptkavach.db"
 
 
-def sanitize_log_text(text: str) -> str:
-    """Redact accidental raw identifiers or secrets from audit descriptions/errors."""
-    if not text:
-        return ""
-    out = _RX_RAW_AADHAAR.sub("[REDACTED_ID]", text)
-    out = _RX_RAW_PHONE.sub("[REDACTED_PHONE]", out)
-    out = _RX_RAW_EMAIL.sub("[REDACTED_EMAIL]", out)
-    secret = os.environ.get("RAKSHA_SECRET", "")
-    if secret and len(secret) >= 4:
-        out = out.replace(secret, "[REDACTED_SECRET]")
-    return out
+def get_db_path() -> Path:
+    override = os.environ.get("MEDILOCKER_DB_PATH")
+    p = Path(override) if override else DEFAULT_DB_PATH
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
 
 
 def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(get_db_path()), timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
     return conn
 
 
-def _ensure_columns(conn: sqlite3.Connection, table: str, cols: Dict[str, str]) -> None:
-    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-    for col_name, col_def in cols.items():
-        if col_name not in existing:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def}")
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    cols = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(c["name"] == column for c in cols)
+
+
+def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    if not _has_column(conn, table, column):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def init_db() -> None:
+    """Initialise database tables and run idempotent non-destructive migrations."""
     with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version TEXT PRIMARY KEY,
+                applied_at REAL NOT NULL
+            )
+        """)
+
+        # --- Organisations ---
         conn.execute("""
             CREATE TABLE IF NOT EXISTS organisations (
                 id TEXT PRIMARY KEY,
-                name TEXT,
-                org_type TEXT,
-                region TEXT,
-                status TEXT,
+                name TEXT NOT NULL,
+                org_type TEXT NOT NULL,
+                region TEXT DEFAULT 'India',
+                status TEXT DEFAULT 'Active',
                 records_contributed INTEGER DEFAULT 0,
-                joined_at REAL,
-                contact_role TEXT DEFAULT 'Privacy Officer'
+                joined_at REAL NOT NULL
             )
         """)
-        _ensure_columns(conn, "organisations", {
-            "contact_role": "TEXT DEFAULT 'Privacy Officer'",
-        })
 
+        # --- Users & RBAC Memberships ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                email TEXT UNIQUE NOT NULL,
+                full_name TEXT NOT NULL,
+                status TEXT DEFAULT 'ACTIVE',
+                platform_role TEXT DEFAULT 'USER',
+                created_at REAL NOT NULL,
+                last_login_at REAL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS memberships (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                organisation_id TEXT NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
+                role TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                UNIQUE(user_id, organisation_id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_memberships_user ON memberships(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_memberships_org ON memberships(organisation_id)")
+
+        # --- Sessions ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                token_hash TEXT UNIQUE NOT NULL,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                active_org_id TEXT REFERENCES organisations(id) ON DELETE SET NULL,
+                expires_at REAL NOT NULL,
+                revoked_at REAL,
+                created_at REAL NOT NULL,
+                ip_address TEXT,
+                user_agent TEXT
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_hash)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)")
+
+        # --- Email OTP Challenges ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS otp_challenges (
+                id TEXT PRIMARY KEY,
+                email TEXT NOT NULL,
+                purpose TEXT NOT NULL DEFAULT 'login',
+                otp_hash TEXT NOT NULL,
+                attempts INTEGER DEFAULT 0,
+                max_attempts INTEGER DEFAULT 5,
+                expires_at REAL NOT NULL,
+                consumed_at REAL,
+                created_at REAL NOT NULL,
+                ip_address TEXT
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_otp_email_purpose ON otp_challenges(email, purpose, created_at)")
+
+        # --- Google OAuth Identities & States ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS oauth_identities (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                provider TEXT NOT NULL,
+                provider_sub TEXT NOT NULL,
+                email TEXT NOT NULL,
+                email_verified INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL,
+                UNIQUE(provider, provider_sub)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_oauth_user ON oauth_identities(user_id)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS oauth_states (
+                state TEXT PRIMARY KEY,
+                nonce TEXT NOT NULL,
+                code_verifier TEXT NOT NULL,
+                redirect_uri TEXT NOT NULL,
+                link_user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+                expires_at REAL NOT NULL,
+                created_at REAL NOT NULL
+            )
+        """)
+
+        # --- Datasets ---
         conn.execute("""
             CREATE TABLE IF NOT EXISTS datasets (
                 id TEXT PRIMARY KEY,
-                org_id TEXT,
-                name TEXT,
-                source_type TEXT,
-                storage_path TEXT,
-                files_count INTEGER DEFAULT 0,
+                organisation_id TEXT NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                format TEXT NOT NULL,
+                file_count INTEGER DEFAULT 0,
                 total_bytes INTEGER DEFAULT 0,
-                formats_json TEXT,
-                manifest_sha256 TEXT,
-                validation_status TEXT,
-                validation_errors_json TEXT,
-                created_at REAL
+                sha256 TEXT,
+                storage_path TEXT,
+                status TEXT DEFAULT 'VALIDATED',
+                created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+                created_at REAL NOT NULL,
+                deleted_at REAL
             )
         """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_datasets_org ON datasets(organisation_id)")
 
+        # --- Processing Jobs (preserve existing table & migrate columns) ---
         conn.execute("""
             CREATE TABLE IF NOT EXISTS jobs (
                 id TEXT PRIMARY KEY,
-                dataset_id TEXT,
-                org_id TEXT,
                 created_at REAL,
                 status TEXT,
-                current_stage TEXT,
-                stage_history_json TEXT,
                 input_name TEXT,
-                output_dir TEXT,
                 files_total INTEGER DEFAULT 0,
                 files_sanitized INTEGER DEFAULT 0,
                 files_quarantined INTEGER DEFAULT 0,
                 records_processed INTEGER DEFAULT 0,
                 records_linked INTEGER DEFAULT 0,
                 identifiers_detected INTEGER DEFAULT 0,
-                records_generalized INTEGER DEFAULT 0,
-                records_suppressed INTEGER DEFAULT 0,
                 duration_secs REAL DEFAULT 0.0,
                 policy_version TEXT DEFAULT '1.0',
-                privacy_assessment_ref TEXT,
-                clinical_assessment_ref TEXT,
-                identity_assessment_ref TEXT,
-                attack_assessment_ref TEXT,
-                passport_id TEXT,
-                release_decision TEXT DEFAULT 'NOT_EVALUATED',
                 error_msg TEXT
             )
         """)
-        _ensure_columns(conn, "jobs", {
-            "dataset_id": "TEXT",
-            "org_id": "TEXT",
-            "current_stage": "TEXT",
-            "stage_history_json": "TEXT",
-            "output_dir": "TEXT",
-            "records_generalized": "INTEGER DEFAULT 0",
-            "records_suppressed": "INTEGER DEFAULT 0",
-            "privacy_assessment_ref": "TEXT",
-            "clinical_assessment_ref": "TEXT",
-            "identity_assessment_ref": "TEXT",
-            "attack_assessment_ref": "TEXT",
-            "passport_id": "TEXT",
-            "release_decision": "TEXT DEFAULT 'NOT_EVALUATED'",
-        })
+        _add_column_if_missing(conn, "jobs", "dataset_id", "TEXT")
+        _add_column_if_missing(conn, "jobs", "organisation_id", "TEXT")
+        _add_column_if_missing(conn, "jobs", "created_by", "TEXT")
+        _add_column_if_missing(conn, "jobs", "started_at", "REAL")
+        _add_column_if_missing(conn, "jobs", "completed_at", "REAL")
+        _add_column_if_missing(conn, "jobs", "current_stage", "TEXT DEFAULT 'CREATED'")
+        _add_column_if_missing(conn, "jobs", "release_decision", "TEXT DEFAULT 'PENDING'")
+        _add_column_if_missing(conn, "jobs", "safe_error_code", "TEXT")
+        _add_column_if_missing(conn, "jobs", "summary_json", "TEXT")
+        _add_column_if_missing(conn, "jobs", "idempotency_key", "TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_org ON jobs(organisation_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_dataset ON jobs(dataset_id)")
 
+        # --- Job Stage Events ---
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS attack_simulations (
+            CREATE TABLE IF NOT EXISTS job_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                stage TEXT NOT NULL,
+                status TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at REAL NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_job_events_job ON job_events(job_id)")
+
+        # --- Privacy Assessments ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS privacy_assessments (
                 id TEXT PRIMARY KEY,
-                job_id TEXT,
-                org_id TEXT,
-                dataset_id TEXT,
-                executed_at REAL,
-                total_records INTEGER DEFAULT 0,
-                pre_uniquely_distinguishable INTEGER DEFAULT 0,
-                post_uniquely_distinguishable INTEGER DEFAULT 0,
-                vectors_json TEXT
+                job_id TEXT UNIQUE NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                dataset_id TEXT REFERENCES datasets(id) ON DELETE SET NULL,
+                organisation_id TEXT REFERENCES organisations(id) ON DELETE SET NULL,
+                pii_detected INTEGER NOT NULL DEFAULT 0,
+                residual_leakage INTEGER NOT NULL DEFAULT 0,
+                canary_planted INTEGER NOT NULL DEFAULT 0,
+                canary_leaks INTEGER NOT NULL DEFAULT 0,
+                canary_status TEXT NOT NULL DEFAULT 'NOT_RUN',
+                qi_risk_score REAL NOT NULL DEFAULT 0.0,
+                reid_risk_level TEXT NOT NULL DEFAULT 'NOT_MEASURED',
+                release_eligible INTEGER NOT NULL DEFAULT 0,
+                details_json TEXT,
+                created_at REAL NOT NULL
             )
         """)
 
+        # --- Identity Clusters ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS identity_clusters (
+                id TEXT PRIMARY KEY,
+                job_id TEXT UNIQUE NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                organisation_id TEXT REFERENCES organisations(id) ON DELETE SET NULL,
+                precision REAL,
+                recall REAL,
+                f05 REAL,
+                false_merges INTEGER NOT NULL DEFAULT 0,
+                total_patients INTEGER NOT NULL DEFAULT 0,
+                cross_hospital_links INTEGER NOT NULL DEFAULT 0,
+                abstentions INTEGER NOT NULL DEFAULT 0,
+                conflicts INTEGER NOT NULL DEFAULT 0,
+                graph_json TEXT,
+                created_at REAL NOT NULL
+            )
+        """)
+
+        # --- Clinical Reports ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS clinical_reports (
+                id TEXT PRIMARY KEY,
+                job_id TEXT UNIQUE NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                organisation_id TEXT REFERENCES organisations(id) ON DELETE SET NULL,
+                expected_values INTEGER NOT NULL DEFAULT 0,
+                preserved_values INTEGER NOT NULL DEFAULT 0,
+                modified_values INTEGER NOT NULL DEFAULT 0,
+                missing_values INTEGER NOT NULL DEFAULT 0,
+                medication_integrity REAL,
+                dosage_integrity REAL,
+                lab_integrity REAL,
+                vital_integrity REAL,
+                fhir_integrity TEXT DEFAULT 'NOT_MEASURED',
+                details_json TEXT,
+                created_at REAL NOT NULL
+            )
+        """)
+
+        # --- Attack Runs ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS attack_runs (
+                id TEXT PRIMARY KEY,
+                job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
+                dataset_id TEXT REFERENCES datasets(id) ON DELETE SET NULL,
+                organisation_id TEXT REFERENCES organisations(id) ON DELETE SET NULL,
+                profile TEXT NOT NULL,
+                risk_score REAL NOT NULL DEFAULT 0.0,
+                blocked_count INTEGER NOT NULL DEFAULT 0,
+                total_count INTEGER NOT NULL DEFAULT 0,
+                results_json TEXT,
+                created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+                created_at REAL NOT NULL
+            )
+        """)
+
+        # --- Privacy Passports ---
         conn.execute("""
             CREATE TABLE IF NOT EXISTS passports (
-                passport_id TEXT PRIMARY KEY,
-                job_id TEXT,
-                dataset_id TEXT,
-                org_id TEXT,
-                policy_version TEXT,
-                input_manifest_hash TEXT,
-                output_manifest_hash TEXT,
-                generated_at TEXT,
-                release_decision TEXT,
-                signature_status TEXT,
-                verification_status TEXT,
-                passport_json TEXT
+                id TEXT PRIMARY KEY,
+                job_id TEXT UNIQUE NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                dataset_id TEXT REFERENCES datasets(id) ON DELETE SET NULL,
+                organisation_id TEXT REFERENCES organisations(id) ON DELETE SET NULL,
+                manifest_hash TEXT NOT NULL,
+                signature_status TEXT NOT NULL DEFAULT 'UNSIGNED',
+                passport_json TEXT NOT NULL,
+                created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+                created_at REAL NOT NULL,
+                verified_at REAL
             )
         """)
 
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS audit_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_id TEXT,
-                timestamp REAL,
-                event_type TEXT,
-                actor TEXT DEFAULT 'local-privacy-officer',
-                org_id TEXT,
-                resource_id TEXT,
-                job_id TEXT,
-                description TEXT,
-                file_hash TEXT,
-                policy_version TEXT,
-                status TEXT,
-                outcome TEXT,
-                safe_metadata TEXT
-            )
-        """)
-        _ensure_columns(conn, "audit_logs", {
-            "event_id": "TEXT",
-            "actor": "TEXT DEFAULT 'local-privacy-officer'",
-            "org_id": "TEXT",
-            "resource_id": "TEXT",
-            "outcome": "TEXT",
-            "safe_metadata": "TEXT",
-        })
-
+        # --- Research Requests (preserve & extend) ---
         conn.execute("""
             CREATE TABLE IF NOT EXISTS research_requests (
                 id TEXT PRIMARY KEY,
                 title TEXT,
                 requestor_org TEXT,
                 target_orgs TEXT,
-                dataset_id TEXT,
-                job_id TEXT,
                 purpose TEXT,
                 status TEXT,
                 created_at REAL,
-                reviewed_at REAL,
-                reviewed_by TEXT,
                 datasets_requested TEXT,
-                permitted_output_ref TEXT,
                 release_simulated INTEGER DEFAULT 0
             )
         """)
-        _ensure_columns(conn, "research_requests", {
-            "dataset_id": "TEXT",
-            "job_id": "TEXT",
-            "reviewed_at": "REAL",
-            "reviewed_by": "TEXT",
-            "permitted_output_ref": "TEXT",
-        })
+        _add_column_if_missing(conn, "research_requests", "organisation_id", "TEXT")
+        _add_column_if_missing(conn, "research_requests", "dataset_id", "TEXT")
+        _add_column_if_missing(conn, "research_requests", "created_by", "TEXT")
+        _add_column_if_missing(conn, "research_requests", "reviewed_by", "TEXT")
+        _add_column_if_missing(conn, "research_requests", "reviewed_at", "REAL")
 
+        # --- Legacy audit_logs (keep for compatibility) & new Audit Events ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp REAL,
+                event_type TEXT,
+                job_id TEXT,
+                description TEXT,
+                file_hash TEXT,
+                policy_version TEXT,
+                status TEXT
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp REAL NOT NULL,
+                actor_id TEXT,
+                actor_email TEXT,
+                actor_role TEXT,
+                organisation_id TEXT,
+                action TEXT NOT NULL,
+                resource_type TEXT NOT NULL,
+                resource_id TEXT,
+                outcome TEXT NOT NULL,
+                details TEXT,
+                ip_address TEXT
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_events_ts ON audit_events(timestamp DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_events_org ON audit_events(organisation_id)")
+
+        # --- Settings ---
         conn.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -219,94 +367,49 @@ def init_db() -> None:
             )
         """)
 
+        # Record migration
+        conn.execute(
+            "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+            ("m17_v1", time.time()),
+        )
+
         # Seed synthetic organisations if empty
         cur = conn.execute("SELECT COUNT(*) as cnt FROM organisations")
         if cur.fetchone()["cnt"] == 0:
             now = time.time()
             orgs = [
-                ("org-hosp-a", "Metro General Hospital (Hospital A)", "Hospital", "Delhi NCR", "Active", 0, now - 86400 * 30, "Chief Privacy Officer"),
-                ("org-hosp-b", "Apex Care Medical Centre (Hospital B)", "Hospital", "Mumbai", "Active", 0, now - 86400 * 20, "Medical Records Lead"),
-                ("org-hosp-c", "Sanjeevani Rural Health (Hospital C)", "Hospital", "Varanasi", "Active", 0, now - 86400 * 15, "Data Steward"),
-                ("org-lab-d", "ThyroCare Bio Diagnostics (Lab D)", "Diagnostic Lab", "Bengaluru", "Active", 0, now - 86400 * 10, "Lab Compliance Officer"),
+                ("org-hosp-a", "Metro General Hospital", "Hospital", "Delhi NCR", "Active", 0, now - 86400 * 30),
+                ("org-hosp-b", "Apex Care Medical Centre", "Hospital", "Mumbai", "Active", 0, now - 86400 * 20),
+                ("org-lab-c", "ThyroCare Bio Diagnostics", "Diagnostic Lab", "Bengaluru", "Active", 0, now - 86400 * 15),
+                ("org-res-d", "National Institute of Epidemiology", "Research Institute", "Chennai", "Active", 0, now - 86400 * 10),
             ]
             conn.executemany(
-                "INSERT INTO organisations (id, name, org_type, region, status, records_contributed, joined_at, contact_role) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO organisations (id, name, org_type, region, status, records_contributed, joined_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 orgs,
             )
 
-        # Seed synthetic research requests if empty
-        cur = conn.execute("SELECT COUNT(*) as cnt FROM research_requests")
+        # Seed default users + memberships if empty (no passwords; authenticate via Email OTP or Google)
+        cur = conn.execute("SELECT COUNT(*) as cnt FROM users")
         if cur.fetchone()["cnt"] == 0:
             now = time.time()
-            requests = [
-                (
-                    "req-2026-001",
-                    "Multi-Centric Type-2 Diabetes Longitudinal Study",
-                    "National Institute of Epidemiology (Synthetic)",
-                    json.dumps(["Metro General Hospital (Hospital A)", "Apex Care Medical Centre (Hospital B)"]),
-                    "practice-dev-dataset",
-                    None,
-                    "Study cross-facility glycemic patterns and age-correlated drug response without patient re-identification.",
-                    "Pending",
-                    now - 86400 * 2,
-                    None,
-                    None,
-                    json.dumps(["OPD Consultations (CSV)", "Lab Biopsy Panels (JSON)"]),
-                    None,
-                    0,
-                ),
+            seed_users = [
+                ("usr-admin", "admin@medilocker.local", "Platform Administrator", "ACTIVE", "PLATFORM_ADMIN", now),
+                ("usr-privacy", "privacy@metrogeneral.org", "Dr. Priya Nair (Privacy Officer)", "ACTIVE", "USER", now),
+                ("usr-research", "research@nie.org", "Dr. Arjun Rao (Researcher)", "ACTIVE", "USER", now),
+                ("usr-auditor", "audit@medilocker.local", "Compliance Auditor", "ACTIVE", "USER", now),
             ]
             conn.executemany(
-                """INSERT INTO research_requests (
-                    id, title, requestor_org, target_orgs, dataset_id, job_id, purpose,
-                    status, created_at, reviewed_at, reviewed_by, datasets_requested,
-                    permitted_output_ref, release_simulated
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                requests,
+                "INSERT INTO users (id, email, full_name, status, platform_role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                seed_users,
             )
-
-
-def record_audit_event(
-    event_type: str,
-    description: str,
-    org_id: Optional[str] = None,
-    resource_id: Optional[str] = None,
-    job_id: Optional[str] = None,
-    file_hash: str = "N/A",
-    policy_version: str = "1.0",
-    status: str = "RECORDED",
-    outcome: str = "SUCCESS",
-    actor: str = "local-privacy-officer",
-    safe_metadata: Optional[Dict[str, Any]] = None,
-) -> str:
-    """Append an immutable audit event with automatic PII/secret scrubbing."""
-    event_id = f"evt-{int(time.time() * 1000)}-{os.urandom(3).hex()}"
-    safe_desc = sanitize_log_text(description)
-    meta_json = json.dumps(safe_metadata or {}, ensure_ascii=False, sort_keys=True)
-    meta_json = sanitize_log_text(meta_json)
-
-    with get_db() as conn:
-        conn.execute(
-            """
-            INSERT INTO audit_logs (
-                event_id, timestamp, event_type, actor, org_id, resource_id, job_id,
-                description, file_hash, policy_version, status, outcome, safe_metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                event_id,
-                time.time(),
-                event_type,
-                actor,
-                org_id,
-                resource_id,
-                job_id,
-                safe_desc,
-                file_hash,
-                policy_version,
-                status,
-                outcome,
-                meta_json,
-            ),
-        )
-    return event_id
+            seed_memberships = [
+                ("mem-1", "usr-admin", "org-hosp-a", "ORG_ADMIN", now),
+                ("mem-2", "usr-admin", "org-hosp-b", "ORG_ADMIN", now),
+                ("mem-3", "usr-privacy", "org-hosp-a", "PRIVACY_OFFICER", now),
+                ("mem-4", "usr-research", "org-res-d", "RESEARCHER", now),
+                ("mem-5", "usr-auditor", "org-hosp-a", "AUDITOR", now),
+            ]
+            conn.executemany(
+                "INSERT INTO memberships (id, user_id, organisation_id, role, created_at) VALUES (?, ?, ?, ?, ?)",
+                seed_memberships,
+            )
