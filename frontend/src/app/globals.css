@@ -1,13 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --bg-primary: #F2F2F2;
-  --bg-white: #FFFFFF;
-  --text-primary: #050505;
+  --bg-primary: #F4F4F2;
   --bg-secondary: #E6E6E6;
-  --border: #DCDCDC;
-  --text-muted: #777777;
-  --font-sans: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  --text-primary: #090909;
+  --text-secondary: #666666;
+  --text-muted: #888888;
+  --surface-white: #FFFFFF;
+  --surface-dark: #090909;
+  --border-color: #DADADA;
+  --divider-color: #E5E5E5;
+
+  --font-serif: "Instrument Serif", "DM Serif Display", "Georgia", "Times New Roman", serif;
+  --font-sans: "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
 
 * {
@@ -27,29 +32,40 @@ body {
   overflow-x: hidden;
 }
 
+.font-serif-display {
+  font-family: var(--font-serif);
+}
+
+.font-sans-ui {
+  font-family: var(--font-sans);
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: var(--bg-secondary);
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: var(--border-color);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
 }
 
-/* Selection */
 ::selection {
-  background-color: #050505;
+  background-color: #090909;
   color: #FFFFFF;
 }
 
-/* Transitions */
-a, button {
-  transition: all 0.15s ease;
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

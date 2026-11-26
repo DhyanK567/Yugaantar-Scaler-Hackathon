@@ -9,16 +9,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
-    <div className="min-h-screen bg-[#F2F2F2] text-[#050505] flex flex-col lg:flex-row">
+    <div className="min-h-screen bg-[#F4F4F2] text-[#090909] flex flex-col lg:flex-row">
       {/* Mobile top bar */}
-      <header className="lg:hidden sticky top-0 z-30 bg-white border-b border-[#E6E6E6] px-4 h-14 flex items-center justify-between">
+      <header className="lg:hidden sticky top-0 z-30 bg-white border-b border-[#DADADA] px-4 h-14 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <img
             src="/medilocker-logo.jpg"
             alt="MediLocker"
             className="w-7 h-7 rounded-full object-cover"
           />
-          <span className="font-semibold text-[15px] tracking-tight text-[#050505]">
+          <span className="font-serif-display text-[18px] text-[#090909]">
             MediLocker
           </span>
         </div>
@@ -26,7 +26,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           type="button"
           onClick={() => setMobileOpen(true)}
           aria-label="Open navigation menu"
-          className="p-2 rounded-lg border border-[#E6E6E6] text-[#050505] hover:bg-[#F2F2F2]"
+          className="p-2 rounded-lg border border-[#DADADA] text-[#090909] hover:bg-[#F4F4F2]"
         >
           <Menu size={18} />
         </button>
@@ -40,7 +40,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       />
 
       <main className="flex-1 min-w-0 w-full">
-        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-9 py-6 lg:py-8">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-10 py-7 lg:py-9">
           {children}
         </div>
       </main>

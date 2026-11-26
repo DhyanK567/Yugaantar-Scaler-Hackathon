@@ -1,7 +1,10 @@
 "use client";
+
 import { useEffect, useState } from "react";
 import { api, type SettingsData } from "@/lib/api";
-import { Save, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { ErrorState, LoadingState } from "@/components/ui/StatePanels";
+import { Save, CheckCircle2 } from "lucide-react";
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<SettingsData | null>(null);
@@ -34,114 +37,108 @@ export default function SettingsPage() {
   }
 
   return (
-    <div style={{ padding: "32px 36px", maxWidth: 760 }}>
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: "#050505", letterSpacing: "-0.8px", marginBottom: 4 }}>
-          Settings
-        </h1>
-        <p style={{ fontSize: 13.5, color: "#777777" }}>
-          User profile, authentication integrations, and privacy engine policy thresholds.
-        </p>
-      </div>
+    <div className="space-y-6 max-w-3xl">
+      <PageHeader
+        eyebrow="12 · CONFIGURATION"
+        title="Settings"
+        subtitle="Account identity, authentication integrations, and privacy engine policy thresholds."
+      />
 
-      {error && (
-        <div style={{ padding: "12px 16px", background: "#FFFBF0", border: "1.5px solid #E6D5A0", borderRadius: 8, fontSize: 13, color: "#7A5C00", marginBottom: 20, display: "flex", alignItems: "center", gap: 8 }}>
-          <AlertTriangle size={15} />
-          {error}
-        </div>
-      )}
+      {error && <ErrorState message={error} />}
 
       {saved && (
-        <div style={{ padding: "12px 16px", background: "#F2F8F2", border: "1.5px solid #B6DAB6", borderRadius: 8, fontSize: 13, color: "#2D7A2D", marginBottom: 20, display: "flex", alignItems: "center", gap: 8 }}>
+        <div className="px-4 py-3 rounded-xl bg-[#ECF3EC] border border-[#C6DBC7] text-[13px] text-[#1E4620] flex items-center gap-2">
           <CheckCircle2 size={15} />
-          Settings saved.
+          <span>Settings saved.</span>
         </div>
       )}
 
-      {settings && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          {/* Auth & Profile Status */}
-          <div style={{ background: "#FFFFFF", border: "1.5px solid #DCDCDC", borderRadius: 10, padding: 22 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: "#050505", marginBottom: 14 }}>
+      {!settings ? (
+        <LoadingState label="Loading configuration…" />
+      ) : (
+        <div className="space-y-6">
+          <div className="bg-white border border-[#DADADA] rounded-2xl p-6">
+            <h2 className="text-[15px] font-semibold text-[#090909] mb-4">
               Account & Authentication Status
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, fontSize: 13 }}>
-              <div><strong>Email:</strong> {settings.user.email}</div>
-              <div><strong>Active Role:</strong> {settings.user.active_role || settings.user.platform_role}</div>
-              <div><strong>SMTP Email OTP:</strong> {settings.smtp_configured ? "Configured" : "Not Configured"}</div>
-              <div><strong>Google OAuth 2.0:</strong> {settings.google_configured ? "Configured" : "Not Configured"}</div>
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[13px] text-[#666666]">
+              <div>
+                <span className="text-[#090909] font-medium">Email:</span> {settings.user.email}
+              </div>
+              <div>
+                <span className="text-[#090909] font-medium">Active Role:</span>{" "}
+                {settings.user.active_role || settings.user.platform_role}
+              </div>
+              <div>
+                <span className="text-[#090909] font-medium">SMTP Email OTP:</span>{" "}
+                {settings.smtp_configured ? "Configured" : "Not Configured"}
+              </div>
+              <div>
+                <span className="text-[#090909] font-medium">Google OAuth 2.0:</span>{" "}
+                {settings.google_configured ? "Configured" : "Not Configured"}
+              </div>
+              <div>
+                <span className="text-[#090909] font-medium">RAKSHA_SECRET:</span>{" "}
+                {settings.raksha_secret_set ? "Set in environment" : "Practice fallback"}
+              </div>
+              <div>
+                <span className="text-[#090909] font-medium">Engine Mode:</span> CPU-only · Offline-first
+              </div>
             </div>
           </div>
 
-          {/* Policy Settings */}
           <form
             onSubmit={handleSave}
-            style={{
-              background: "#FFFFFF",
-              border: "1.5px solid #DCDCDC",
-              borderRadius: 10,
-              padding: 24,
-              display: "flex",
-              flexDirection: "column",
-              gap: 18,
-            }}
+            className="bg-white border border-[#DADADA] rounded-2xl p-6 space-y-5"
           >
-            <div style={{ fontSize: 14, fontWeight: 600, color: "#050505" }}>
+            <h2 className="text-[15px] font-semibold text-[#090909]">
               Privacy Engine Policy
-            </div>
+            </h2>
+
             <div>
-              <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#050505", marginBottom: 6 }}>
+              <label className="block text-[12.5px] font-medium text-[#090909] mb-1.5">
                 Output Format
               </label>
               <input
                 value={settings.output_format}
                 onChange={(e) => setSettings({ ...settings, output_format: e.target.value })}
-                style={{ width: "100%", padding: "9px 12px", border: "1.5px solid #DCDCDC", borderRadius: 7, fontSize: 14, background: "#FAFAFA" }}
+                className="w-full px-3 py-2 rounded-lg bg-[#F4F4F2]/60 border border-[#DADADA] text-[13.5px] focus:outline-none focus:border-[#090909]"
               />
             </div>
 
             <div>
-              <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#050505", marginBottom: 6 }}>
+              <label className="block text-[12.5px] font-medium text-[#090909] mb-1.5">
                 Quarantine Threshold
               </label>
               <input
                 type="number"
                 step="0.05"
                 value={settings.quarantine_threshold}
-                onChange={(e) => setSettings({ ...settings, quarantine_threshold: Number(e.target.value) })}
-                style={{ width: "100%", padding: "9px 12px", border: "1.5px solid #DCDCDC", borderRadius: 7, fontSize: 14, background: "#FAFAFA" }}
+                onChange={(e) =>
+                  setSettings({ ...settings, quarantine_threshold: Number(e.target.value) })
+                }
+                className="w-full px-3 py-2 rounded-lg bg-[#F4F4F2]/60 border border-[#DADADA] text-[13.5px] focus:outline-none focus:border-[#090909]"
               />
             </div>
 
-            <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13.5, color: "#050505", cursor: "pointer" }}>
+            <label className="flex items-center gap-2.5 text-[13.5px] text-[#090909] cursor-pointer">
               <input
                 type="checkbox"
                 checked={settings.multilingual_enabled}
-                onChange={(e) => setSettings({ ...settings, multilingual_enabled: e.target.checked })}
+                onChange={(e) =>
+                  setSettings({ ...settings, multilingual_enabled: e.target.checked })
+                }
               />
-              Enable Multilingual PII Detection
+              <span>Enable Multilingual PII Detection</span>
             </label>
 
             <button
               type="submit"
               disabled={saving}
-              style={{
-                alignSelf: "flex-start",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "10px 20px",
-                background: "#050505",
-                color: "#FFFFFF",
-                border: "none",
-                borderRadius: 7,
-                fontSize: 13.5,
-                fontWeight: 600,
-                cursor: saving ? "not-allowed" : "pointer",
-              }}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-[#090909] text-white text-[13px] font-medium hover:bg-[#222222] disabled:opacity-50"
             >
               <Save size={14} />
-              {saving ? "Saving…" : "Save Settings"}
+              <span>{saving ? "Saving…" : "Save Settings"}</span>
             </button>
           </form>
         </div>

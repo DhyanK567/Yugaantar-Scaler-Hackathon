@@ -1,620 +1,187 @@
 import Link from "next/link";
-import Image from "next/image";
 import MarketingNav from "@/components/layout/MarketingNav";
-import {
-  Shield,
-  Network,
-  HeartPulse,
-  Brain,
-  FileKey2,
-  Swords,
-  ArrowRight,
-  CheckCircle2,
-} from "lucide-react";
 
-const FEATURES = [
+const TRUST_METRICS = [
   {
-    icon: Shield,
-    title: "Multilingual PII Detection",
-    desc: "Detects patient identifiers across English, Hindi, Tamil, Telugu, Bengali, Marathi and more using deterministic NLP — no LLMs required.",
+    value: "0/4",
+    label: "Canary leaks",
+    caption: "dev/input · 200 files",
+    cardClass: "bg-[#090909] text-white border-[#090909]",
+    labelClass: "text-[#B5B5B5]",
+    captionClass: "text-[#888888]",
   },
   {
-    icon: Network,
-    title: "Cross-Hospital Identity Continuity",
-    desc: "Links patient records across hospitals and diagnostic labs using phonetic, transliteration and structural evidence without false merges.",
+    value: "1.00",
+    label: "Identity precision",
+    caption: "823 records · 0 false merges",
+    cardClass: "bg-[#E6E6E6] text-[#090909] border-[#DADADA]",
+    labelClass: "text-[#555555]",
+    captionClass: "text-[#777777]",
   },
   {
-    icon: HeartPulse,
-    title: "Clinical Integrity Preservation",
-    desc: "Lab values, diagnoses, medications and FHIR R4 clinical fields are preserved with 99.8%+ accuracy through every sanitisation pass.",
+    value: "99.8%",
+    label: "Clinical data preserved",
+    caption: "4,449 / 4,457 values",
+    cardClass: "bg-[#BFBFBF] text-[#090909] border-[#B0B0B0]",
+    labelClass: "text-[#333333]",
+    captionClass: "text-[#555555]",
   },
   {
-    icon: Brain,
-    title: "Re-identification Risk Analysis",
-    desc: "Adversarial red-team simulations measure re-identification risk and quasi-identifier k-anonymity before data leaves your environment.",
-  },
-  {
-    icon: FileKey2,
-    title: "Cryptographic Privacy Passports",
-    desc: "Every sanitised dataset carries a cryptographically verifiable Privacy Passport with deterministic pseudonym proofs.",
-  },
-  {
-    icon: Swords,
-    title: "Adversarial Attack Simulation",
-    desc: "Built-in attack simulator tests linkage, singling-out, inference and canary-recall attacks against your sanitised output.",
+    value: "100%",
+    label: "Offline, CPU-only",
+    caption: "Zero LLMs · Zero cloud calls",
+    cardClass: "bg-white text-[#090909] border-[#DADADA]",
+    labelClass: "text-[#666666]",
+    captionClass: "text-[#888888]",
   },
 ];
 
-const STATS = [
-  { value: "0/4", label: "Canary leaks" },
-  { value: "1.00", label: "Identity precision" },
-  { value: "99.8%", label: "Clinical data preserved" },
-  { value: "100%", label: "Offline · CPU-only" },
+const FEATURES = [
+  {
+    num: "01",
+    title: "Multilingual PII detection",
+    desc: "English, Hindi/Devanagari and Hinglish across CSV, TSV, JSON, FHIR R4 and clinical notes. No LLMs.",
+  },
+  {
+    num: "02",
+    title: "Cross-hospital identity continuity",
+    desc: "Phonetic, transliteration and structural evidence with conservative abstention — zero false merges.",
+  },
+  {
+    num: "03",
+    title: "Clinical integrity and re-identification risk",
+    desc: "Labs, medicines and FHIR R4 stay intact while k-anonymity and structural uniqueness risks are measured.",
+  },
+  {
+    num: "04",
+    title: "Privacy passports and attack simulation",
+    desc: "Hash-verified pseudonym manifests, plus 7-vector linkage and canary-recall checks on your output.",
+  },
 ];
 
 export default function HomePage() {
   return (
-    <div style={{ background: "#F2F2F2", minHeight: "100vh" }}>
+    <div className="min-h-screen bg-[#F4F4F2] text-[#090909]">
       <MarketingNav />
 
-      {/* Hero */}
-      <section
-        style={{
-          maxWidth: 1200,
-          margin: "0 auto",
-          padding: "80px 24px 60px",
-          textAlign: "center",
-        }}
-      >
-        {/* Badge */}
-        <div
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "6px 14px",
-            background: "#FFFFFF",
-            border: "1px solid #DCDCDC",
-            borderRadius: 100,
-            fontSize: 12.5,
-            color: "#555555",
-            marginBottom: 32,
-            fontWeight: 500,
-          }}
-        >
-          <span
-            style={{
-              width: 6,
-              height: 6,
-              borderRadius: "50%",
-              background: "#050505",
-              display: "inline-block",
-            }}
-          />
-          Healthcare Data Privacy Infrastructure
+      {/* Hero Section */}
+      <section className="max-w-[1160px] mx-auto px-6 pt-16 sm:pt-24 pb-12">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#666666] mb-5">
+          HEALTHCARE DATA PRIVACY INFRASTRUCTURE
         </div>
 
-        {/* Heading */}
-        <h1
-          style={{
-            fontSize: "clamp(40px, 6vw, 72px)",
-            fontWeight: 700,
-            lineHeight: 1.08,
-            letterSpacing: "-2.5px",
-            color: "#050505",
-            maxWidth: 800,
-            margin: "0 auto 20px",
-          }}
-        >
-          Secure. Private.
+        <h1 className="font-serif-display text-[48px] sm:text-[68px] lg:text-[84px] leading-[1.02] tracking-[-0.02em] text-[#090909] max-w-4xl">
+          What happens in the ward,
           <br />
-          Clinically Usable.
+          <span className="italic text-[#888888]">stays in the ward.</span>
         </h1>
 
-        <p
-          style={{
-            fontSize: 18,
-            color: "#555555",
-            maxWidth: 540,
-            margin: "0 auto 40px",
-            lineHeight: 1.6,
-            fontWeight: 400,
-          }}
-        >
-          MediLocker protects patient identities while preserving clinically
-          valuable medical information — enabling secure collaboration between
-          hospitals, labs and research institutions.
-        </p>
+        <div className="mt-10 flex flex-col md:flex-row md:items-end justify-between gap-8">
+          <p className="text-[16px] sm:text-[17px] leading-[1.6] text-[#666666] max-w-lg">
+            MediLocker protects patient identities while keeping every clinically
+            valuable value intact, so hospitals, labs and researchers can finally
+            collaborate.
+          </p>
 
-        {/* CTAs */}
-        <div
-          style={{
-            display: "flex",
-            gap: 12,
-            justifyContent: "center",
-            flexWrap: "wrap",
-          }}
-        >
-          <Link
-            href="/register"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "12px 28px",
-              background: "#050505",
-              color: "#FFFFFF",
-              borderRadius: 8,
-              textDecoration: "none",
-              fontSize: 15,
-              fontWeight: 600,
-              letterSpacing: "-0.2px",
-            }}
-          >
-            Get Started Free
-            <ArrowRight size={16} />
-          </Link>
-          <Link
-            href="/dashboard"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "12px 28px",
-              background: "#FFFFFF",
-              color: "#050505",
-              border: "1.5px solid #DCDCDC",
-              borderRadius: 8,
-              textDecoration: "none",
-              fontSize: 15,
-              fontWeight: 500,
-            }}
-          >
-            Open Console
-          </Link>
+          <div className="flex flex-wrap items-center gap-3 shrink-0">
+            <Link
+              href="/register"
+              className="px-6 py-3 rounded-full bg-[#090909] text-white text-[13.5px] font-medium hover:bg-[#222222] transition-colors"
+            >
+              Get started free
+            </Link>
+            <Link
+              href="/dashboard"
+              className="px-6 py-3 rounded-full bg-white border border-[#090909] text-[#090909] text-[13.5px] font-medium hover:bg-[#E6E6E6] transition-colors"
+            >
+              Open console
+            </Link>
+          </div>
         </div>
       </section>
 
-      {/* Stats bar */}
+      {/* Four Monochrome Trust Metric Cards */}
       <section
-        style={{
-          background: "#050505",
-          padding: "28px 24px",
-        }}
+        aria-label="Verified Benchmark Metrics"
+        className="max-w-[1160px] mx-auto px-6 py-8"
       >
-        <div
-          style={{
-            maxWidth: 900,
-            margin: "0 auto",
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: 24,
-            textAlign: "center",
-          }}
-        >
-          {STATS.map((s) => (
-            <div key={s.label}>
-              <div
-                style={{
-                  fontSize: 28,
-                  fontWeight: 700,
-                  color: "#FFFFFF",
-                  letterSpacing: "-1px",
-                }}
-              >
-                {s.value}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {TRUST_METRICS.map((m) => (
+            <div
+              key={m.label}
+              title={m.caption}
+              className={`rounded-2xl border p-7 flex flex-col justify-between min-h-[164px] ${m.cardClass}`}
+            >
+              <div className="font-serif-display text-[44px] sm:text-[48px] leading-none tracking-[-0.02em]">
+                {m.value}
               </div>
-              <div style={{ fontSize: 12, color: "#777777", marginTop: 4 }}>
-                {s.label}
+              <div className="mt-6">
+                <div className={`text-[13.5px] font-medium ${m.labelClass}`}>
+                  {m.label}
+                </div>
+                <div className={`text-[11px] mt-1 ${m.captionClass}`}>
+                  {m.caption}
+                </div>
               </div>
             </div>
           ))}
         </div>
       </section>
 
-      {/* Dashboard preview frame */}
-      <section
-        style={{
-          maxWidth: 1100,
-          margin: "0 auto",
-          padding: "60px 24px 40px",
-        }}
-      >
-        <div
-          style={{
-            background: "#FFFFFF",
-            border: "1.5px solid #DCDCDC",
-            borderRadius: 12,
-            overflow: "hidden",
-          }}
-        >
-          {/* Window chrome */}
-          <div
-            style={{
-              background: "#F2F2F2",
-              borderBottom: "1px solid #DCDCDC",
-              padding: "10px 16px",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            {["#E6E6E6", "#E6E6E6", "#E6E6E6"].map((c, i) => (
-              <div
-                key={i}
-                style={{
-                  width: 10,
-                  height: 10,
-                  borderRadius: "50%",
-                  background: c,
-                  border: "1px solid #DCDCDC",
-                }}
-              />
-            ))}
-            <div
-              style={{
-                flex: 1,
-                marginLeft: 8,
-                background: "#FFFFFF",
-                border: "1px solid #DCDCDC",
-                borderRadius: 4,
-                padding: "3px 10px",
-                fontSize: 11,
-                color: "#777777",
-                maxWidth: 240,
-              }}
-            >
-              medilocker.app/dashboard
-            </div>
-          </div>
-
-          {/* Mock dashboard */}
-          <div style={{ display: "flex", height: 320 }}>
-            {/* Sidebar preview */}
-            <div
-              style={{
-                width: 160,
-                borderRight: "1px solid #EEEEEE",
-                padding: "16px 12px",
-                background: "#FAFAFA",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  marginBottom: 20,
-                }}
-              >
-                <Image
-                  src="/medilocker-logo.jpg"
-                  alt="ML"
-                  width={20}
-                  height={20}
-                  style={{ borderRadius: "50%" }}
-                />
-                <span style={{ fontSize: 11, fontWeight: 600, color: "#050505" }}>
-                  MediLocker
-                </span>
-              </div>
-              {["Dashboard", "Datasets", "Privacy Engine", "Attack Sim", "Audit"].map(
-                (item, i) => (
-                  <div
-                    key={item}
-                    style={{
-                      padding: "5px 8px",
-                      borderRadius: 4,
-                      marginBottom: 2,
-                      fontSize: 10.5,
-                      color: i === 0 ? "#050505" : "#888888",
-                      background: i === 0 ? "#EEEEEE" : "transparent",
-                      fontWeight: i === 0 ? 500 : 400,
-                    }}
-                  >
-                    {item}
-                  </div>
-                )
-              )}
-            </div>
-
-            {/* Main area preview */}
-            <div style={{ flex: 1, padding: 20 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 16, color: "#050505" }}>
-                Privacy Dashboard
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
-                {[
-                  { label: "Files Processed", val: "200" },
-                  { label: "PII Detected", val: "0 leaked" },
-                  { label: "Clinical Preserved", val: "99.8%" },
-                ].map((m) => (
-                  <div
-                    key={m.label}
-                    style={{
-                      background: "#F2F2F2",
-                      border: "1px solid #E6E6E6",
-                      borderRadius: 6,
-                      padding: "10px 12px",
-                    }}
-                  >
-                    <div style={{ fontSize: 16, fontWeight: 700, color: "#050505" }}>
-                      {m.val}
-                    </div>
-                    <div style={{ fontSize: 10, color: "#777777", marginTop: 2 }}>
-                      {m.label}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div
-                style={{
-                  background: "#F2F2F2",
-                  border: "1px solid #E6E6E6",
-                  borderRadius: 6,
-                  padding: "10px 12px",
-                  fontSize: 10.5,
-                  color: "#555555",
-                }}
-              >
-                <div style={{ fontWeight: 500, marginBottom: 6, color: "#050505" }}>
-                  Recent Jobs
-                </div>
-                {["hospital_a_records.csv", "diagnostic_lab_q3.json", "fhir_bundle_001.json"].map(
-                  (f) => (
-                    <div
-                      key={f}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        padding: "4px 0",
-                        borderBottom: "1px solid #ECECEC",
-                      }}
-                    >
-                      <span>{f}</span>
-                      <span
-                        style={{
-                          background: "#050505",
-                          color: "#fff",
-                          borderRadius: 3,
-                          padding: "1px 6px",
-                          fontSize: 9,
-                          fontWeight: 500,
-                        }}
-                      >
-                        SANITISED
-                      </span>
-                    </div>
-                  )
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Features */}
+      {/* Asymmetric Features Section */}
       <section
         id="features"
-        style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 24px 80px" }}
+        className="max-w-[1160px] mx-auto px-6 py-20 sm:py-28"
       >
-        <div style={{ marginBottom: 48, textAlign: "center" }}>
-          <div
-            style={{
-              display: "inline-block",
-              fontSize: 11,
-              fontWeight: 600,
-              letterSpacing: "1px",
-              textTransform: "uppercase",
-              color: "#777777",
-              marginBottom: 12,
-            }}
-          >
-            Capabilities
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
+          <div className="lg:col-span-5">
+            <h2 className="font-serif-display text-[36px] sm:text-[44px] leading-[1.1] tracking-[-0.015em] text-[#090909]">
+              Built to survive a breach, and an audit.
+            </h2>
           </div>
-          <h2
-            style={{
-              fontSize: "clamp(28px, 4vw, 44px)",
-              fontWeight: 700,
-              letterSpacing: "-1.5px",
-              color: "#050505",
-              margin: 0,
-            }}
-          >
-            Everything your privacy
-            <br />
-            infrastructure needs
-          </h2>
-        </div>
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
-            gap: 20,
-          }}
-        >
-          {FEATURES.map((f) => {
-            const Icon = f.icon;
-            return (
+          <div className="lg:col-span-7 border-t border-[#DADADA]">
+            {FEATURES.map((f) => (
               <div
-                key={f.title}
-                style={{
-                  background: "#FFFFFF",
-                  border: "1.5px solid #DCDCDC",
-                  borderRadius: 10,
-                  padding: "28px 24px",
-                  transition: "border-color 0.15s",
-                }}
+                key={f.num}
+                className="py-6 border-b border-[#DADADA] grid grid-cols-[44px_1fr] gap-4 items-start"
               >
-                <div
-                  style={{
-                    width: 36,
-                    height: 36,
-                    background: "#F2F2F2",
-                    borderRadius: 8,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    marginBottom: 16,
-                  }}
-                >
-                  <Icon size={18} strokeWidth={1.5} color="#050505" />
+                <span className="font-serif-display text-[17px] text-[#888888] pt-0.5">
+                  {f.num}
+                </span>
+                <div>
+                  <h3 className="text-[15.5px] font-semibold text-[#090909]">
+                    {f.title}
+                  </h3>
+                  <p className="text-[13.5px] text-[#666666] mt-1 leading-relaxed">
+                    {f.desc}
+                  </p>
                 </div>
-                <div
-                  style={{
-                    fontSize: 15,
-                    fontWeight: 600,
-                    color: "#050505",
-                    marginBottom: 8,
-                    letterSpacing: "-0.3px",
-                  }}
-                >
-                  {f.title}
-                </div>
-                <p
-                  style={{
-                    fontSize: 13.5,
-                    color: "#666666",
-                    lineHeight: 1.6,
-                    margin: 0,
-                  }}
-                >
-                  {f.desc}
-                </p>
               </div>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* CTA Banner */}
-      <section
-        style={{
-          background: "#050505",
-          padding: "60px 24px",
-          textAlign: "center",
-        }}
-      >
-        <div style={{ maxWidth: 600, margin: "0 auto" }}>
-          <h2
-            style={{
-              fontSize: "clamp(28px, 4vw, 40px)",
-              fontWeight: 700,
-              color: "#FFFFFF",
-              letterSpacing: "-1.5px",
-              marginBottom: 16,
-            }}
-          >
-            Ready to protect your patients?
-          </h2>
-          <p
-            style={{
-              fontSize: 15,
-              color: "#888888",
-              marginBottom: 32,
-              lineHeight: 1.6,
-            }}
-          >
-            Start processing healthcare data with zero PII leakage, full
-            clinical integrity and cryptographic audit trails.
-          </p>
-          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-            <Link
-              href="/register"
-              style={{
-                padding: "12px 28px",
-                background: "#FFFFFF",
-                color: "#050505",
-                borderRadius: 8,
-                textDecoration: "none",
-                fontSize: 15,
-                fontWeight: 600,
-              }}
-            >
-              Start for Free
-            </Link>
-            <Link
-              href="/pricing"
-              style={{
-                padding: "12px 28px",
-                background: "transparent",
-                color: "#FFFFFF",
-                border: "1.5px solid #333333",
-                borderRadius: 8,
-                textDecoration: "none",
-                fontSize: 15,
-                fontWeight: 500,
-              }}
-            >
-              View Pricing
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer
-        style={{
-          background: "#FFFFFF",
-          borderTop: "1px solid #DCDCDC",
-          padding: "32px 24px",
-        }}
-      >
-        <div
-          style={{
-            maxWidth: 1100,
-            margin: "0 auto",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: 16,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Image
-              src="/medilocker-logo.jpg"
-              alt="MediLocker"
-              width={22}
-              height={22}
-              style={{ borderRadius: "50%" }}
-            />
-            <span style={{ fontSize: 13, fontWeight: 600, color: "#050505" }}>
-              MediLocker
-            </span>
-            <span style={{ fontSize: 12, color: "#AAAAAA", marginLeft: 8 }}>
-              © 2024 Yugaantar DevForge
-            </span>
-          </div>
-          <div style={{ display: "flex", gap: 24 }}>
-            {[
-              { label: "Pricing", href: "/pricing" },
-              { label: "FAQ", href: "/faq" },
-              { label: "Console", href: "/dashboard" },
-            ].map((l) => (
-              <Link
-                key={l.href}
-                href={l.href}
-                style={{ fontSize: 13, color: "#777777", textDecoration: "none" }}
-              >
-                {l.label}
-              </Link>
             ))}
           </div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              fontSize: 11.5,
-              color: "#AAAAAA",
-            }}
-          >
-            <CheckCircle2 size={12} />
-            Fully offline · No LLMs · CPU-only
-          </div>
         </div>
+      </section>
+
+      {/* Final Dark CTA */}
+      <section className="max-w-[1160px] mx-auto px-6 pb-16">
+        <div className="bg-[#090909] text-white rounded-3xl px-8 sm:px-12 py-12 sm:py-14 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6">
+          <h2 className="font-serif-display text-[32px] sm:text-[40px] leading-tight tracking-[-0.015em]">
+            Ready to protect your patients?
+          </h2>
+          <Link
+            href="/register"
+            className="inline-flex items-center justify-center px-6 py-3 rounded-full bg-white text-[#090909] text-[13.5px] font-semibold hover:bg-[#E6E6E6] transition-colors shrink-0"
+          >
+            Start for free
+          </Link>
+        </div>
+      </section>
+
+      {/* Restrained Footer */}
+      <footer className="max-w-[1160px] mx-auto px-6 py-8 border-t border-[#E5E5E5] flex flex-col sm:flex-row items-center justify-between gap-4 text-[12px] text-[#888888]">
+        <span>© 2026 Yugaantar DevForge</span>
+        <span>Fully offline · No LLMs · CPU-only</span>
       </footer>
     </div>
   );
