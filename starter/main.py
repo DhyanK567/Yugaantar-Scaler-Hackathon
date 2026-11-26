@@ -38,6 +38,13 @@ from raksha_engine.sanitizer import (
     sanitize_json_node,
     sanitize_structured_cell,
 )
+from raksha_engine.crypto import (
+    GuptKavachKeyRing,
+    InvalidSecretError,
+)
+from raksha_engine.secure_fs import verify_path_containment
+from raksha_engine.quarantine import QuarantineVault
+
 
 
 def load_policy(path: Path) -> dict:
@@ -162,9 +169,13 @@ def main() -> int:
     a = ap.parse_args()
 
     t0 = time.monotonic()
-    inp, out = Path(a.input.strip("'\"")), Path(a.output.strip("'\""))
+    inp, out = Path(a.input.strip("'\"")).resolve(), Path(a.output.strip("'\"")).resolve()
     san = out / "sanitized"
     san.mkdir(parents=True, exist_ok=True)
+
+    # Initialize key ring for cryptographic security
+    keyring = GuptKavachKeyRing(SECRET) if SECRET else None
+
 
     max_days = int(POLICY.get("date_shift_max_days", 180))
     min_group = int(POLICY.get("min_group_size", 5))
@@ -179,11 +190,19 @@ def main() -> int:
     local_firsts: dict[str, set[str]] = {}
 
     for path in sorted(p for p in inp.rglob("*") if p.is_file()):
-        rel = path.relative_to(inp).as_posix()
-        raw = path.read_bytes()
+        # Path traversal and symlink security verification
+        try:
+            canonical_path = verify_path_containment(path, inp)
+        except Exception:
+            # Reject symlinks or escaped paths
+            continue
+
+        rel = canonical_path.relative_to(inp).as_posix()
+        raw = canonical_path.read_bytes()
         sha = hashlib.sha256(raw).hexdigest()
-        ext = path.suffix.lower()
+        ext = canonical_path.suffix.lower()
         item: dict = {"rel": rel, "sha": sha, "ext": ext, "status": "ok"}
+
 
         try:
             if ext not in (".csv", ".tsv", ".json", ".txt"):
