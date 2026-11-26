@@ -1,0 +1,4 @@
+[submission]
+name  = "Team Halfwave"
+setup = "pip install -r starter/requirements.txt"
+run   = "python3 starter/main.py --input {input} --output {output}"
