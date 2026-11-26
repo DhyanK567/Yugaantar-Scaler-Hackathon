@@ -27,8 +27,10 @@ from .patterns import (
     RX_PHONE,
     RX_PHONE_MASKED,
     RX_PIN,
+    RX_VILLAGE_BEFORE_TEHSIL,
     RX_VILLAGE_LABEL,
     classify_field,
+    is_clinical_safe_field,
     normalize_digits,
 )
 from .privacy import age_band, generalize_pin, shift_date_string, shift_dates_in_text
@@ -36,7 +38,14 @@ from .privacy import age_band, generalize_pin, shift_date_string, shift_dates_in
 _B64_RX = re.compile(r"[A-Za-z0-9+/]{24,}={0,2}")
 
 
-def sanitize_base64_in_text(text: str, name_index: CorpusNameIndex, pkey: str | None, secret: bytes, max_days: int) -> tuple[str, int]:
+def sanitize_base64_in_text(
+    text: str,
+    name_index: CorpusNameIndex,
+    pkey: str | None,
+    secret: bytes,
+    max_days: int,
+    local_first_names: set[str] | None = None,
+) -> tuple[str, int]:
     """Decode base64 runs that contain UTF-8 text, sanitize them, and re-encode."""
     hits = 0
 
@@ -51,7 +60,9 @@ def sanitize_base64_in_text(text: str, name_index: CorpusNameIndex, pkey: str | 
         # Only treat as text attachment if mostly printable
         if not decoded or sum(ch.isprintable() or ch in "\r\n\t" for ch in decoded) / len(decoded) < 0.85:
             return tok
-        cleaned, n = sanitize_free_text(decoded, name_index, pkey, secret, max_days, decode_b64=False)
+        cleaned, n = sanitize_free_text(
+            decoded, name_index, pkey, secret, max_days, decode_b64=False, local_first_names=local_first_names
+        )
         if n > 0 or cleaned != decoded:
             hits += n
             return base64.b64encode(cleaned.encode("utf-8")).decode("ascii")
@@ -67,17 +78,21 @@ def sanitize_free_text(
     secret: bytes,
     max_days: int = 180,
     decode_b64: bool = True,
+    clinical_safe: bool = False,
+    local_first_names: set[str] | None = None,
 ) -> tuple[str, int]:
     """Sanitize unstructured clinical/administrative text while preserving medical utility."""
     total = 0
     work = normalize_digits(text)
 
     if decode_b64:
-        work, n_b64 = sanitize_base64_in_text(work, name_index, patient_key, secret, max_days)
+        work, n_b64 = sanitize_base64_in_text(
+            work, name_index, patient_key, secret, max_days, local_first_names=local_first_names
+        )
         total += n_b64
 
     # 1. Names and relatives (with Dr. and clinical phrase protection)
-    work, n_names = redact_names_in_text(work, name_index)
+    work, n_names = redact_names_in_text(work, name_index, local_first_names=local_first_names)
     total += n_names
 
     # 2. Direct identifiers (longest/most specific first)
@@ -104,28 +119,38 @@ def sanitize_free_text(
 
     work = RX_DOB_LABEL.sub(_sub_dob, work)
 
-    # 4. Address components & PIN generalization
+    # 4. Address components & PIN generalization (skip Ward/PIN on clinical-safe fields)
     for tag, rx in (
         ("[HOUSE]", RX_HOUSE),
-        ("[LOCALITY]", RX_LOCALITY),
         ("[LANDMARK]", RX_LANDMARK),
     ):
         work, n = rx.subn(tag, work)
         total += n
 
-    def _sub_village(m: re.Match[str]) -> str:
-        nonlocal total
-        total += 1
-        return f"{m.group('prefix')}[VILLAGE]"
+    if not clinical_safe:
+        work, n_loc = RX_LOCALITY.subn("[LOCALITY]", work)
+        total += n_loc
 
-    work = RX_VILLAGE_LABEL.sub(_sub_village, work)
+        def _sub_village(m: re.Match[str]) -> str:
+            nonlocal total
+            total += 1
+            return f"{m.group('prefix')}[VILLAGE]"
 
-    def _sub_pin(m: re.Match[str]) -> str:
-        nonlocal total
-        total += 1
-        return generalize_pin(m.group(0))
+        work = RX_VILLAGE_LABEL.sub(_sub_village, work)
 
-    work = RX_PIN.sub(_sub_pin, work)
+        def _sub_village_tehsil(m: re.Match[str]) -> str:
+            nonlocal total
+            total += 1
+            return "[VILLAGE]"
+
+        work = RX_VILLAGE_BEFORE_TEHSIL.sub(_sub_village_tehsil, work)
+
+        def _sub_pin(m: re.Match[str]) -> str:
+            nonlocal total
+            total += 1
+            return generalize_pin(m.group(0))
+
+        work = RX_PIN.sub(_sub_pin, work)
 
     # 5. Age generalization in text (e.g., "48 Y / F" -> "45-49 Y / F", "आयु: 39 वर्ष" -> "आयु: 35-39 वर्ष")
     work = re.sub(
@@ -135,7 +160,7 @@ def sanitize_free_text(
         flags=re.IGNORECASE,
     )
     work = re.sub(
-        r"((?:Age|आयु|उम्र)\s*[:\-]?\s*)(\d{1,3})(\s*(?:yrs|years|वर्ष)?)",
+        r"(?<![A-Za-z\u0900-\u097f])((?:Age|आयु|उम्र)\s*[:\-]?\s*)(\d{1,3})(\s*(?:yrs|years|वर्ष)?)",
         lambda m: f"{m.group(1)}{age_band(int(m.group(2)))}{m.group(3)}",
         work,
         flags=re.IGNORECASE,
@@ -186,6 +211,8 @@ def sanitize_structured_cell(
     secret: bytes,
     max_days: int,
     rare_suppress: bool = False,
+    clinical_safe: bool = False,
+    local_first_names: set[str] | None = None,
 ) -> tuple[str, int, bool]:
     """Sanitize a CSV cell or JSON leaf string based on its semantic field kind.
     Returns (new_value, identifiers_count, was_generalized).
@@ -242,12 +269,20 @@ def sanitize_structured_cell(
     if kind == "DOCTOR":
         return val, 0, False
     if kind == "ADDRESS":
-        cleaned, n = sanitize_free_text(val, name_index, patient_key, secret, max_days)
+        cleaned, n = sanitize_free_text(
+            val, name_index, patient_key, secret, max_days, local_first_names=local_first_names
+        )
         return cleaned, max(n, 1), True
 
     # Default: free-text sanitization
-    cleaned, n = sanitize_free_text(val, name_index, patient_key, secret, max_days)
+    cleaned, n = sanitize_free_text(
+        val, name_index, patient_key, secret, max_days,
+        clinical_safe=clinical_safe, local_first_names=local_first_names,
+    )
     return cleaned, n, False
+
+
+_NON_PERSON_FHIR_TYPES = {"Organization", "Location", "Practitioner", "Medication", "Substance", "Device"}
 
 
 def sanitize_json_node(
@@ -259,6 +294,7 @@ def sanitize_json_node(
     secret: bytes,
     max_days: int,
     rare_suppress: bool = False,
+    local_first_names: set[str] | None = None,
 ) -> tuple[object, int, bool]:
     """Recursively sanitize a JSON object/list/scalar while preserving types and FHIR R4 structure."""
     if isinstance(node, str):
@@ -273,14 +309,21 @@ def sanitize_json_node(
         if parent_key == "source" and node.startswith("#"):
             return f"#{pid}" if pid else "#[MRN]", 1, False
         kind = classify_field(parent_key)
-        return sanitize_structured_cell(kind, node, name_index, patient_key, pid, secret, max_days, rare_suppress)
+        csafe = is_clinical_safe_field(parent_key)
+        return sanitize_structured_cell(
+            kind, node, name_index, patient_key, pid, secret, max_days,
+            rare_suppress, clinical_safe=csafe, local_first_names=local_first_names,
+        )
 
     if isinstance(node, list):
         out = []
         tot = 0
         gen = False
         for item in node:
-            c_item, n, g = sanitize_json_node(item, parent_key, name_index, patient_key, pid, secret, max_days, rare_suppress)
+            c_item, n, g = sanitize_json_node(
+                item, parent_key, name_index, patient_key, pid, secret, max_days,
+                rare_suppress, local_first_names=local_first_names,
+            )
             out.append(c_item)
             tot += n
             gen = gen or g
@@ -288,19 +331,37 @@ def sanitize_json_node(
 
     if isinstance(node, dict):
         # Special FHIR Patient & RelatedPerson resource handling
-        if node.get("resourceType") == "Patient":
-            return _sanitize_fhir_patient(node, name_index, patient_key, pid, secret, max_days, rare_suppress)
-        if node.get("resourceType") == "RelatedPerson":
-            return _sanitize_fhir_related_person(node, name_index, patient_key, secret, max_days)
+        rtype = node.get("resourceType")
+        if rtype == "Patient":
+            return _sanitize_fhir_patient(
+                node, name_index, patient_key, pid, secret, max_days, rare_suppress, local_first_names=local_first_names
+            )
+        if rtype == "RelatedPerson":
+            return _sanitize_fhir_related_person(
+                node, name_index, patient_key, secret, max_days, local_first_names=local_first_names
+            )
 
         out_dict = {}
         tot = 0
         gen = False
         for k, v in node.items():
             # Sanitize key if it holds PII (e.g., patient_index.json "by_name" / "by_uhid")
-            clean_k, nk = sanitize_free_text(k, name_index, None, b"", decode_b64=False)
+            clean_k, nk = sanitize_free_text(
+                k, name_index, None, b"", decode_b64=False, local_first_names=local_first_names
+            )
             tot += nk
-            c_v, nv, gv = sanitize_json_node(v, k, name_index, patient_key, pid, secret, max_days, rare_suppress)
+            if rtype in _NON_PERSON_FHIR_TYPES and k == "name" and isinstance(v, str):
+                c_v, nv, gv = v, 0, False
+            else:
+                c_v, nv, gv = sanitize_json_node(
+                    v, k, name_index, patient_key, pid, secret, max_days,
+                    rare_suppress, local_first_names=local_first_names,
+                )
+            if clean_k in out_dict:
+                dup = 2
+                while f"{clean_k}_{dup}" in out_dict:
+                    dup += 1
+                clean_k = f"{clean_k}_{dup}"
             out_dict[clean_k] = c_v
             tot += nv
             gen = gen or gv
@@ -327,6 +388,7 @@ def _sanitize_fhir_patient(
     secret: bytes,
     max_days: int,
     rare_suppress: bool,
+    local_first_names: set[str] | None = None,
 ) -> tuple[dict, int, bool]:
     """Sanitize a FHIR R4 Patient resource while keeping it valid R4."""
     out = dict(node)
@@ -337,6 +399,42 @@ def _sanitize_fhir_patient(
     if "telecom" in out:
         out["telecom"] = [{"system": "phone", "value": "[PHONE]"}]
         tot += 1
+    if "contact" in out and isinstance(out["contact"], list):
+        new_contacts = []
+        for ct in out["contact"]:
+            if isinstance(ct, dict):
+                nc = dict(ct)
+                if "name" in nc:
+                    nc["name"] = {"text": "[RELATIVE_NAME]"}
+                    tot += 1
+                if "telecom" in nc:
+                    nc["telecom"] = [{"system": "phone", "value": "[PHONE]"}]
+                    tot += 1
+                if "address" in nc:
+                    nc["address"] = {}
+                    tot += 1
+                new_contacts.append(nc)
+        out["contact"] = new_contacts
+    if "extension" in out and isinstance(out["extension"], list):
+        new_exts = []
+        for ext in out["extension"]:
+            if isinstance(ext, dict):
+                ne = dict(ext)
+                url = str(ne.get("url", "")).casefold()
+                if "valueString" in ne and any(w in url for w in ("mother", "father", "spouse", "relative", "guardian", "kin", "name")):
+                    ne["valueString"] = "[RELATIVE_NAME]"
+                    tot += 1
+                elif "valueString" in ne:
+                    cv, nv, _ = sanitize_json_node(
+                        ne["valueString"], "valueString", name_index, patient_key, pid, secret, max_days,
+                        rare_suppress, local_first_names=local_first_names,
+                    )
+                    ne["valueString"] = cv
+                    tot += nv
+                new_exts.append(ne)
+            else:
+                new_exts.append(ext)
+        out["extension"] = new_exts
     if "identifier" in out and isinstance(out["identifier"], list):
         new_ids = []
         for ident in out["identifier"]:
@@ -367,7 +465,10 @@ def _sanitize_fhir_patient(
             out["birthDate"] = "[DOB]"
         tot += 1
     if "text" in out:
-        clean_txt, n_txt, _ = sanitize_json_node(out["text"], "text", name_index, patient_key, pid, secret, max_days, rare_suppress)
+        clean_txt, n_txt, _ = sanitize_json_node(
+            out["text"], "text", name_index, patient_key, pid, secret, max_days,
+            rare_suppress, local_first_names=local_first_names,
+        )
         out["text"] = clean_txt
         tot += n_txt
     return out, tot, True
@@ -379,6 +480,7 @@ def _sanitize_fhir_related_person(
     patient_key: str | None,
     secret: bytes,
     max_days: int,
+    local_first_names: set[str] | None = None,
 ) -> tuple[dict, int, bool]:
     """Sanitize a FHIR R4 RelatedPerson resource."""
     out = dict(node)
@@ -393,7 +495,10 @@ def _sanitize_fhir_related_person(
         out["address"] = []
         tot += 1
     if "text" in out:
-        clean_txt, n_txt, _ = sanitize_json_node(out["text"], "text", name_index, patient_key, None, secret, max_days, False)
+        clean_txt, n_txt, _ = sanitize_json_node(
+            out["text"], "text", name_index, patient_key, None, secret, max_days,
+            False, local_first_names=local_first_names,
+        )
         out["text"] = clean_txt
         tot += n_txt
     return out, tot, False

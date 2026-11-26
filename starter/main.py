@@ -30,7 +30,7 @@ from raksha_engine.linking import (
     set_name_clue,
 )
 from raksha_engine.names import CorpusNameIndex, extract_names_from_text, is_clinical_phrase
-from raksha_engine.patterns import classify_field, normalize_digits
+from raksha_engine.patterns import classify_field, is_clinical_safe_field, normalize_digits
 from raksha_engine.privacy import age_band, pseudonym
 from raksha_engine.sanitizer import (
     sanitize_filename,
@@ -78,11 +78,21 @@ def decode(raw: bytes) -> str | None:
     return None
 
 
+_NON_PERSON_FHIR_TYPES = {"Organization", "Location", "Practitioner", "Medication", "Substance", "Device"}
+
+
+def _add_local_first(local_map: dict[str, set[str]], rid: str, raw_name: str) -> None:
+    parts = raw_name.strip().split()
+    if parts and len(parts[0]) >= 3 and not parts[0].isupper():
+        local_map.setdefault(rid, set()).add(parts[0])
+
+
 def _extract_json_clues(
     node,
     parent_key: str,
     clues: RecordClues,
     name_index: CorpusNameIndex,
+    local_firsts: dict[str, set[str]] | None = None,
 ) -> None:
     if isinstance(node, str):
         kind = classify_field(parent_key)
@@ -91,6 +101,8 @@ def _extract_json_clues(
                 name_index.add_name(node)
                 if kind == "PATIENT_NAME":
                     set_name_clue(clues, node)
+                    if local_firsts is not None:
+                        _add_local_first(local_firsts, clues.record_id, node)
         elif kind == "DISTRICT":
             clues.district = node.strip()
         elif kind == "VILLAGE":
@@ -114,17 +126,27 @@ def _extract_json_clues(
             clues.age = node
     elif isinstance(node, list):
         for item in node:
-            _extract_json_clues(item, parent_key, clues, name_index)
+            _extract_json_clues(item, parent_key, clues, name_index, local_firsts)
     elif isinstance(node, dict):
-        if node.get("resourceType") == "Patient":
+        rtype = node.get("resourceType")
+        if rtype == "Patient":
             for nm in node.get("name") or []:
                 if isinstance(nm, dict) and nm.get("text"):
                     name_index.add_name(str(nm["text"]))
                     set_name_clue(clues, str(nm["text"]))
+                    if local_firsts is not None:
+                        _add_local_first(local_firsts, clues.record_id, str(nm["text"]))
+            for ct in node.get("contact") or []:
+                if isinstance(ct, dict) and isinstance(ct.get("name"), dict) and ct["name"].get("text"):
+                    name_index.add_name(str(ct["name"]["text"]))
             if node.get("gender"):
                 clues.gender = str(node["gender"])[0].upper()
         for k, v in node.items():
-            _extract_json_clues(v, k, clues, name_index)
+            if rtype in _NON_PERSON_FHIR_TYPES and k == "name":
+                continue
+            if rtype == "Patient" and k == "contact":
+                continue
+            _extract_json_clues(v, k, clues, name_index, local_firsts)
 
 
 def _qi_signature(clues: RecordClues, width: int = 5) -> tuple[str, str] | None:
@@ -154,6 +176,7 @@ def main() -> int:
     parsed_files: list[dict] = []
     name_index = CorpusNameIndex()
     all_clues: list[RecordClues] = []
+    local_firsts: dict[str, set[str]] = {}
 
     for path in sorted(p for p in inp.rglob("*") if p.is_file()):
         rel = path.relative_to(inp).as_posix()
@@ -191,6 +214,7 @@ def main() -> int:
                                     name_index.add_name(cell)
                                     if ck == "PATIENT_NAME":
                                         set_name_clue(clues, cell)
+                                        _add_local_first(local_firsts, rid, cell)
                             elif ck == "DISTRICT" and cell.strip():
                                 clues.district = cell.strip()
                             elif ck == "VILLAGE" and cell.strip():
@@ -214,16 +238,37 @@ def main() -> int:
                 data = json.loads(text)
                 item["kind"] = "json"
                 item["data"] = data
+                has_top_patient = isinstance(data, dict) and (
+                    "patient" in data
+                    or any(
+                        classify_field(k) in ("PATIENT_NAME", "MRN", "PHONE", "AADHAAR", "ABHA_NUMBER")
+                        for k in data.keys()
+                    )
+                )
                 is_doc = (
                     not isinstance(data, dict)
                     or data.get("resourceType") == "Bundle"
+                    or has_top_patient
                     or not any(isinstance(v, list) and v and all(isinstance(x, dict) for x in v) for v in data.values())
                 )
                 item["is_doc"] = is_doc
                 if is_doc:
                     rid = f"{rel}::doc"
                     clues = RecordClues(record_id=rid)
-                    _extract_json_clues(data, "", clues, name_index)
+                    _extract_json_clues(data, "", clues, name_index, local_firsts)
+                    # Multi-patient index/summary JSONs (e.g. by_uhid / by_name) must not merge distinct patients
+                    is_multi_index = (
+                        isinstance(data, dict)
+                        and data.get("resourceType") != "Bundle"
+                        and (len(clues.mrns) > 1 or len(clues.strong_ids) > 3)
+                    )
+                    if is_multi_index:
+                        clues.strong_ids.clear()
+                        clues.mrns.clear()
+                        clues.name_tokens.clear()
+                        clues.full_phonetic_name = ""
+                    else:
+                        merge_clues(clues, extract_clues_from_text(rid, rel))
                     all_clues.append(clues)
                 else:
                     for k, v in data.items():
@@ -232,14 +277,22 @@ def main() -> int:
                                 ptr = "/" + k.replace("~", "~0").replace("/", "~1") + f"/{i}"
                                 rid = f"{rel}::{ptr}"
                                 clues = RecordClues(record_id=rid)
-                                _extract_json_clues(obj, k, clues, name_index)
+                                _extract_json_clues(obj, k, clues, name_index, local_firsts)
                                 all_clues.append(clues)
             else:
                 item["kind"] = "txt"
                 item["text"] = text
                 rid = f"{rel}::doc"
-                extract_names_from_text(text, name_index)
+                txt_names = CorpusNameIndex()
+                extract_names_from_text(text, txt_names)
+                for fn in txt_names.first_names:
+                    name_index.first_names.add(fn)
+                    local_firsts.setdefault(rid, set()).add(fn)
+                for full_n in txt_names.full_names:
+                    name_index.add_name(full_n)
                 clues = extract_clues_from_text(rid, text)
+                if txt_names.full_names:
+                    set_name_clue(clues, sorted(txt_names.full_names)[0])
                 all_clues.append(clues)
 
         except (ValueError, RecursionError, UnicodeError, csv.Error) as exc:
@@ -252,6 +305,21 @@ def main() -> int:
     # Resolve patient clusters globally
     cluster_map = resolve_identities(all_clues)
     clues_by_rid = {c.record_id: c for c in all_clues}
+
+    # Share first names across records in the same patient cluster (for notes like "Irfan ka BP")
+    cluster_firsts: dict[str, set[str]] = {}
+    for rid, fset in local_firsts.items():
+        ckey = cluster_map.get(rid)
+        if ckey:
+            cluster_firsts.setdefault(ckey, set()).update(fset)
+
+    def _firsts_for(rid: str, ckey: str | None) -> set[str] | None:
+        s: set[str] = set()
+        if rid in local_firsts:
+            s.update(local_firsts[rid])
+        if ckey and ckey in cluster_firsts:
+            s.update(cluster_firsts[ckey])
+        return s or None
 
     # Compute quasi-identifier group sizes for rare-group suppression
     qi_counts: Counter[tuple[str, str]] = Counter()
@@ -296,7 +364,10 @@ def main() -> int:
                     col_kinds = item["col_kinds"]
                     clean_header = []
                     for h in header:
-                        ch, nh = sanitize_free_text(h, name_index, None, SECRET, max_days, decode_b64=False)
+                        ch, nh = sanitize_free_text(
+                            h, name_index, None, SECRET, max_days, decode_b64=False,
+                            local_first_names=name_index.first_names,
+                        )
                         Stats.identifiers += nh
                         clean_header.append(ch)
                     buf = io.StringIO()
@@ -315,8 +386,10 @@ def main() -> int:
                         row_gen = False
                         for c_idx, cell in enumerate(row):
                             ck = col_kinds[c_idx] if c_idx < len(col_kinds) else None
+                            csafe = is_clinical_safe_field(header[c_idx]) if c_idx < len(header) else False
                             nc, n_id, g = sanitize_structured_cell(
-                                ck, cell, name_index, ckey or rid, pid, SECRET, max_days, rare_suppress=rare
+                                ck, cell, name_index, ckey or rid, pid, SECRET, max_days,
+                                rare_suppress=rare, clinical_safe=csafe, local_first_names=_firsts_for(rid, ckey),
                             )
                             Stats.identifiers += n_id
                             row_gen = row_gen or g
@@ -350,7 +423,8 @@ def main() -> int:
                     rare = bool(sig and qi_counts[sig] < min_group)
 
                     clean_data, n_id, gen = sanitize_json_node(
-                        data, "", name_index, ckey or rid, pid, SECRET, max_days, rare_suppress=rare
+                        data, "", name_index, ckey or rid, pid, SECRET, max_days,
+                        rare_suppress=rare, local_first_names=_firsts_for(rid, ckey),
                     )
                     Stats.identifiers += n_id
                     if gen:
@@ -377,7 +451,8 @@ def main() -> int:
                                 rare = bool(sig and qi_counts[sig] < min_group)
 
                                 c_obj_out, n_id, gen = sanitize_json_node(
-                                    obj, k, name_index, ckey or rid, pid, SECRET, max_days, rare_suppress=rare
+                                    obj, k, name_index, ckey or rid, pid, SECRET, max_days,
+                                    rare_suppress=rare, local_first_names=_firsts_for(rid, ckey),
                                 )
                                 Stats.identifiers += n_id
                                 if gen:
@@ -400,7 +475,10 @@ def main() -> int:
                 rid = f"{rel}::doc"
                 ckey = cluster_map.get(rid)
                 pid = pseudonym(ckey, SECRET) if ckey else None
-                out_text, n_id = sanitize_free_text(item["text"], name_index, ckey or rid, SECRET, max_days)
+                out_text, n_id = sanitize_free_text(
+                    item["text"], name_index, ckey or rid, SECRET, max_days,
+                    local_first_names=_firsts_for(rid, ckey),
+                )
                 Stats.identifiers += n_id
                 if pid and pid not in out_text:
                     out_text = f"Patient: {pid}\n" + out_text

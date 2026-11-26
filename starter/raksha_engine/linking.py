@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 
 from .names import normalize_name_tokens
 from .patterns import (
@@ -73,11 +74,13 @@ def extract_clues_from_text(record_id: str, text: str) -> RecordClues:
         d = re.sub(r"\D", "", m.group(0))
         if len(d) == 14:
             clues.strong_ids.add(f"abha:{d}")
-    for m in RX_AADHAAR.finditer(t):
+    t_no_abha = RX_ABHA_NUM.sub(" ", t)
+    for m in RX_AADHAAR.finditer(t_no_abha):
         d = re.sub(r"\D", "", m.group(0))
         if len(d) == 12:
             clues.strong_ids.add(f"aadhaar:{d}")
-    for m in RX_PHONE.finditer(t):
+    t_no_aadhaar = RX_AADHAAR.sub(" ", t_no_abha)
+    for m in RX_PHONE.finditer(t_no_aadhaar):
         p = _norm_phone(m.group(0))
         if p:
             clues.strong_ids.add(f"phone:{p}")
@@ -164,13 +167,51 @@ def resolve_identities(all_clues: list[RecordClues]) -> dict[str, str | None]:
             x = parent[x]
         return x
 
+    # Track cluster-level demographics to prevent transitive homonym merges
+    c_gender: list[str] = [c.gender for c in all_clues]
+    c_byear: list[tuple[int, int] | None] = [(c.birth_year, c.birth_year) if c.birth_year else None for c in all_clues]
+    c_age: list[tuple[int, int] | None] = [(c.age, c.age) if c.age is not None else None for c in all_clues]
+    c_fname: list[str] = [c.name_tokens[0] if c.name_tokens else "" for c in all_clues]
+    c_global_ids: list[set[str]] = [{s for s in c.strong_ids if s.startswith(("aadhaar:", "abha:", "pan:"))} for c in all_clues]
+
+    def _clusters_compatible(ri: int, rj: int) -> bool:
+        if c_gender[ri] and c_gender[rj] and c_gender[ri] != c_gender[rj]:
+            return False
+        if c_byear[ri] and c_byear[rj]:
+            lo = min(c_byear[ri][0], c_byear[rj][0])
+            hi = max(c_byear[ri][1], c_byear[rj][1])
+            if hi - lo > 1:
+                return False
+        if c_age[ri] and c_age[rj]:
+            lo = min(c_age[ri][0], c_age[rj][0])
+            hi = max(c_age[ri][1], c_age[rj][1])
+            if hi - lo > 3:
+                return False
+        if c_fname[ri] and c_fname[rj] and c_fname[ri] != c_fname[rj]:
+            if not (c_global_ids[ri] & c_global_ids[rj]):
+                # Allow minor phonetic/transliteration spelling variants (e.g. Zainab/Zenab, Fatma/Fatima)
+                if SequenceMatcher(None, c_fname[ri], c_fname[rj]).ratio() < 0.72:
+                    return False
+        return True
+
     def union(i: int, j: int) -> None:
         ri, rj = find(i), find(j)
-        if ri != rj:
-            if ri < rj:
-                parent[rj] = ri
-            else:
-                parent[ri] = rj
+        if ri == rj:
+            return
+        if not _clusters_compatible(ri, rj):
+            return
+        if ri > rj:
+            ri, rj = rj, ri
+        parent[rj] = ri
+        if not c_gender[ri] and c_gender[rj]:
+            c_gender[ri] = c_gender[rj]
+        if c_byear[rj]:
+            c_byear[ri] = c_byear[rj] if not c_byear[ri] else (min(c_byear[ri][0], c_byear[rj][0]), max(c_byear[ri][1], c_byear[rj][1]))
+        if c_age[rj]:
+            c_age[ri] = c_age[rj] if not c_age[ri] else (min(c_age[ri][0], c_age[rj][0]), max(c_age[ri][1], c_age[rj][1]))
+        if not c_fname[ri] and c_fname[rj]:
+            c_fname[ri] = c_fname[rj]
+        c_global_ids[ri].update(c_global_ids[rj])
 
     # Build deterministic blocking indices
     by_strong: dict[str, list[int]] = {}
