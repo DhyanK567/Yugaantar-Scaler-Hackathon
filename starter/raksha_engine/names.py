@@ -70,6 +70,7 @@ _PHONETIC_SUBS = [
     (re.compile(r"aa+"), "a"),
     (re.compile(r"ee+"), "i"),
     (re.compile(r"oo+"), "u"),
+    (re.compile(r"ai"), "e"),
     (re.compile(r"ph"), "f"),
     (re.compile(r"v"), "w"),
     (re.compile(r"sh"), "s"),
@@ -130,6 +131,8 @@ CLINICAL_STOPWORDS = {
     "haemoglobin", "hemoglobin", "creatinine", "bilirubin", "platelet", "sugar", "blood",
     "pulse", "temp", "spo2", "weight", "male", "female", "patient", "attendant", "doctor",
     "hospital", "clinic", "pathology", "pharmacy", "billing", "claim", "helpdesk", "ticket",
+    "worker", "workers", "nurse", "duty", "staff", "attendant", "multispeciality",
+    "charitable", "sadan", "seva", "trust", "foundation", "laboratory", "center", "centre",
     "addison", "addisons", "parkinson", "parkinsons", "crohn", "crohns", "hodgkin", "graves",
     "alzheimer", "alzheimers", "cushing", "bell", "guillain", "barre", "kawasaki", "meniere",
 }
@@ -142,12 +145,23 @@ RX_LABELED_NAME = re.compile(
 
 RX_REPORT_OF = re.compile(
     r"(?im)(?P<prefix>\bReport\s+of\s+)(?!Dr\.?\s)(?P<name>[A-Za-z\u0900-\u097f][A-Za-z\u0900-\u097f.\s]{1,35}?)"
-    r"(?=\s+(?:ji|sahab|saheb|behenji|bhaiya|didi|bhai|\d{1,3}\s*(?:Y|yrs|years|/)|[MF]\b|\n|$))"
+    r"(?=\s+(?:ji|sahab|saheb|behenji|bhaiya|bhai|didi|\d{1,3}\s*(?:Y|yrs|years|/)|[MF]\b|\n|$))"
 )
 
 RX_HONORIFIC_NAME = re.compile(
     r"(?m)(?<!Dr\.\s)(?<!Dr\s)\b(?P<name>(?:[A-Z][a-z]{2,18}|[\u0900-\u097f]{2,18})(?:\s+(?:[A-Z][a-z]{2,18}|[\u0900-\u097f]{2,18}))?)"
-    r"\s+(?P<hon>(?i:ji|sahab|saheb|behenji|bhaiya|didi|chacha|chachu|chachi|mama|mamu|mami|tau|kaka|bua|mausi|fufa|bhabhi|uncle|aunty)|जी|साहब)\b"
+    r"\s+(?P<hon>(?i:ji|sahab|saheb|behenji|bhaiya|bhaisahab|bhai|didi|bhabhiji|bhabhi|papa|mummy|amma|mataji|pitaji|chacha|chachu|chachi|mama|mamu|mami|tau|kaka|bua|mausi|fufa|dada|dadi|nana|nani|uncle|aunty)|जी|साहब)\b"
+)
+
+# WhatsApp / chat sender: "[06/02/26, 7:56 pm] Raju Papa: ..."
+RX_WHATSAPP_SENDER = re.compile(
+    r"(?m)^(?P<prefix>\[\d{1,2}/\d{1,2}/\d{2,4},\s*\d{1,2}:\d{2}(?:\s*[ap]m)?\]\s*)(?P<name>[^:\n]{2,35}?)(?=:)"
+)
+
+# Contextual person roles (witness, caller, visitor/attendant)
+RX_CONTEXT_PERSON = re.compile(
+    r"(?m)(?P<prefix>(?i:\bwitnessed\s+by\s+|\bcalled\s+by\s+|\battendant\s*[:\-]\s*)|\b\d{1,2}:\d{2}\s*-\s*)"
+    r"(?!Dr\.?\s)(?P<name>[A-Z][a-z]{1,18}(?:\s+[A-Z][a-z]{1,18}){1,2})(?=\s*(?:\(|,|;|\n|$|\d))"
 )
 
 # Relatives: S/o, D/o, W/o, and C/O ONLY when followed by capitalized/Devanagari name (not C/O fever/pain!)
@@ -167,6 +181,8 @@ def is_clinical_phrase(text: str) -> bool:
     toks = re.findall(r"[a-z]+", text.casefold())
     if not toks:
         return False
+    if "asha" in toks and (text.strip() == "ASHA" or "worker" in toks or "workers" in toks):
+        return True
     return any(t in CLINICAL_STOPWORDS for t in toks)
 
 
@@ -186,11 +202,13 @@ class CorpusNameIndex:
         cleaned = re.sub(r"\s+", " ", cleaned)
         if not cleaned or len(cleaned) < 3:
             return
+        if cleaned.isupper() and len(cleaned) <= 6:
+            return
         if is_clinical_phrase(cleaned):
             return
         self.full_names.add(cleaned)
         parts = cleaned.split()
-        if len(parts) >= 1 and len(parts[0]) >= 3 and parts[0].casefold() not in CLINICAL_STOPWORDS:
+        if len(parts) >= 1 and len(parts[0]) >= 3 and parts[0].casefold() not in CLINICAL_STOPWORDS and not parts[0].isupper():
             self.first_names.add(parts[0])
         ptoks = normalize_name_tokens(cleaned)
         if ptoks:
@@ -213,18 +231,22 @@ class CorpusNameIndex:
 
 def extract_names_from_text(text: str, index: CorpusNameIndex) -> None:
     """Harvest high-confidence person names from free text into CorpusNameIndex."""
-    for rx in (RX_LABELED_NAME, RX_REPORT_OF, RX_RELATIVE, RX_CARE_OF_NAME):
+    for rx in (RX_LABELED_NAME, RX_REPORT_OF, RX_RELATIVE, RX_CARE_OF_NAME, RX_WHATSAPP_SENDER, RX_CONTEXT_PERSON):
         for m in rx.finditer(text):
             name = m.group("name").strip(" .,:;")
             if not is_clinical_phrase(name):
                 index.add_name(name)
     for m in RX_HONORIFIC_NAME.finditer(text):
         name = m.group("name").strip(" .,:;")
-        if not is_clinical_phrase(name) or name.casefold() == "asha":
+        if not is_clinical_phrase(name):
             index.add_name(name)
 
 
-def redact_names_in_text(text: str, index: CorpusNameIndex) -> tuple[str, int]:
+def redact_names_in_text(
+    text: str,
+    index: CorpusNameIndex,
+    local_first_names: set[str] | None = None,
+) -> tuple[str, int]:
     """Redact labeled names, honorific names, relatives, and corpus-known names
     while strictly preserving Doctor names and clinical phrases.
     """
@@ -261,12 +283,14 @@ def redact_names_in_text(text: str, index: CorpusNameIndex) -> tuple[str, int]:
 
     work = RX_LABELED_NAME.sub(_sub_labeled, work)
     work = RX_REPORT_OF.sub(_sub_labeled, work)
+    work = RX_WHATSAPP_SENDER.sub(_sub_labeled, work)
+    work = RX_CONTEXT_PERSON.sub(_sub_labeled, work)
 
-    # 4. Honorifics: "<Name> ji/sahab/behenji/didi/bhaiya"
+    # 4. Honorifics: "<Name> ji/sahab/behenji/didi/bhaiya/bhai/papa"
     def _sub_hon(m: re.Match[str]) -> str:
         nonlocal count
         name = m.group("name").strip()
-        if is_clinical_phrase(name) and name.casefold() != "asha":
+        if is_clinical_phrase(name):
             return m.group(0)
         count += 1
         return f"[PATIENT_NAME] {m.group('hon')}"
@@ -279,7 +303,34 @@ def redact_names_in_text(text: str, index: CorpusNameIndex) -> tuple[str, int]:
         work, n = rx.subn("[PATIENT_NAME]", work)
         count += n
 
-    # 6. Restore protected "Dr. <Name>" spans
+    # 5b. Phonetic 2-word name variants of corpus-known names (e.g., Zenab Bano <-> Zainab Bano)
+    if index.full_phonetic:
+        def _sub_phonetic(m: re.Match[str]) -> str:
+            nonlocal count
+            cand = m.group(0)
+            if is_clinical_phrase(cand):
+                return cand
+            ptoks = normalize_name_tokens(cand)
+            if len(ptoks) >= 2 and " ".join(ptoks) in index.full_phonetic:
+                count += 1
+                return "[PATIENT_NAME]"
+            return cand
+
+        work = re.sub(r"\b[A-Z][a-z]{2,18}\s+[A-Z][a-z]{2,18}\b", _sub_phonetic, work)
+
+    # 6. Record/file-local first names (catches "Rajan's attendant", "Irfan ka BP", CSV headers)
+    if local_first_names:
+        safe_firsts = sorted(
+            (fn for fn in local_first_names if len(fn) >= 3 and fn.casefold() not in CLINICAL_STOPWORDS and not fn.isupper()),
+            key=len,
+            reverse=True,
+        )
+        if safe_firsts:
+            fn_rx = re.compile(r"(?<!\w)(?!ASHA\b)(?:" + "|".join(re.escape(f) for f in safe_firsts) + r")(?:'s)?(?!\w)")
+            work, n_fn = fn_rx.subn("[PATIENT_NAME]", work)
+            count += n_fn
+
+    # 7. Restore protected "Dr. <Name>" spans
     for i, doc_str in enumerate(doc_spans):
         work = work.replace(f"__RAKSHA_DOC_{i}__", doc_str)
 

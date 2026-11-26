@@ -57,6 +57,17 @@ CLINICAL_SAFE_COLS = re.compile(
 )
 
 
+def is_clinical_safe_field(name: str) -> bool:
+    """Return True if the column/key name is a clinical/numeric field where PIN/Ward regexes must not run."""
+    nk = norm_key(name)
+    if not nk:
+        return False
+    return bool(
+        CLINICAL_SAFE_COLS.search(nk)
+        and not re.search(r"\b(patient|beneficiary|relative|mobile|phone|aadhaar|abha|pan|dob|address|pin|postal)\b", nk)
+    )
+
+
 def classify_field(name: str) -> str | None:
     """Return semantic PII/QI type for a column header or JSON key, or None."""
     nk = norm_key(name)
@@ -111,10 +122,17 @@ RX_INSURANCE = re.compile(
 
 # Address & location components
 RX_HOUSE = re.compile(r"(?i)(?:\b(?:H\.?\s*No\.?|House(?:\s*No\.?)?|Makan(?:\s*No\.?)?|Flat(?:\s*No\.?)?)\s*[:#-]?\s*\d+[A-Za-z0-9/-]*\b|मकान\s*नं\.?\s*[:#-]?\s*\d+[A-Za-z0-9/-]*)")
-RX_LOCALITY = re.compile(r"(?i)(?:\b(?:Ward\s*\d+|Mohalla\s+[A-Z][A-Za-z\s]{2,30}?)(?=,|\n|$|\bTehsil\b|\bDistt\b|\bnear\b|\bopp\b)|(?:वार्ड\s*\d+|मोहल्ला\s+[\u0900-\u097f\s]{2,30}?)(?=,|\n|$|तहसील|जिला))")
-RX_LANDMARK = re.compile(r"(?i)(?:\b(?:near|opp\.?|opposite|behind)\s+[A-Z][A-Za-z\s]{2,35}?(?=,|\n|$|\bTehsil\b|\bDistt\b)|[\u0900-\u097f\s]{2,35}?\s+के\s+(?:पास|पीछे|सामने))")
-RX_VILLAGE_LABEL = re.compile(r"(?im)(?P<prefix>\b(?:Village|Gram|Gaon)\s*[:\-]\s*|(?:ग्राम|गाँव|गांव)\s*[:\-]\s*)(?P<val>[^\n,;|।]+)")
-RX_PIN = re.compile(r"(?<!\d)[1-8]\d{5}(?!\d)")
+RX_LOCALITY = re.compile(r"(?im)(?:\b(?:Ward\s*\d+|Mohalla\s+[A-Z][A-Za-z\s]{2,30}?)(?=\s*(?:,|\n|$|\bTehsil\b|\bDistt\b|\bnear\b|\bopp\b))|(?:वार्ड\s*\d+|मोहल्ला\s+[\u0900-\u097f\s]{2,30}?)(?=\s*(?:,|\n|$|तहसील|जिला)))")
+RX_LANDMARK = re.compile(r"(?im)(?:\b(?:near|opp\.?|opposite|behind)\s+[A-Z][A-Za-z\s]{2,35}?(?=\s*(?:,|\n|$|\bTehsil\b|\bDistt\b))|[\u0900-\u097f\s]{2,35}?\s+के\s+(?:पास|पीछे|सामने))")
+RX_VILLAGE_LABEL = re.compile(
+    r"(?im)(?P<prefix>\b(?:Village|Vill\.?|Gram|Gaon)\s*[:\-]?\s*|(?:ग्राम|गाँव|गांव)\s*[:\-]?\s*)"
+    r"(?P<val>[^\n,;|।]+?)(?=\s*(?:,|;|\||।|\n|\bTehsil\b|\bTaluka\b|\bDistt?\b|तहसील|जिला|$))"
+)
+RX_VILLAGE_BEFORE_TEHSIL = re.compile(
+    r"(?im)(?<=,\s)(?!(?:H\.?\s*No|House|Makan|Flat|Ward|Mohalla|near|opp|opposite|behind|C/O|S/o|D/o|W/o)\b)"
+    r"(?P<val>[A-Za-z\u0900-\u097f][A-Za-z\u0900-\u097f\s]{2,35}?)(?=\s*,\s*(?:Tehsil|Taluka|Block|तहसील|जिला|Distt?\.?)\b)"
+)
+RX_PIN = re.compile(r"(?<!\d)(?<!-)[1-8]\d{5}(?!\d)(?!-)")
 
 # Dates: DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD, MM/DD/YYYY
 RX_DATE_ISO = re.compile(r"\b(19\d{2}|20\d{2})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b")

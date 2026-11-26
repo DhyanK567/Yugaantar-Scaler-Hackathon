@@ -1,5 +1,16 @@
 my_output*/
+/out*/
+/output*/
 __pycache__/
 *.pyc
+*.pyo
 .venv/
+venv/
+env/
+.env
+.env.*
+*.key
+*.pem
+*.log
+*.tmp
 .DS_Store
