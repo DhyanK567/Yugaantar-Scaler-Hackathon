@@ -405,3 +405,22 @@ def test_rbac_and_cross_org_isolation(client: TestClient, monkeypatch: pytest.Mo
     _otp_login(client, "audit@medilocker.local", monkeypatch)
     upd = client.post("/api/settings", json={"quarantine_threshold": 0.9})
     assert upd.status_code == 403
+
+
+def test_dev_email_login_only_when_smtp_unconfigured_in_dev(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    # Blocked when SMTP is configured (default in fixture)
+    r_blocked = client.post("/api/auth/dev-login", json={"email": "deepugm12345@gmail.com"})
+    assert r_blocked.status_code == 403
+
+    # Allowed in local dev when SMTP is not configured
+    monkeypatch.delenv("SMTP_HOST", raising=False)
+    monkeypatch.delenv("SMTP_FROM_EMAIL", raising=False)
+    r_ok = client.post("/api/auth/dev-login", json={"email": "deepugm12345@gmail.com"})
+    assert r_ok.status_code == 200
+    assert r_ok.json()["user"]["email"] == "deepugm12345@gmail.com"
+    client.post("/api/auth/logout")
+
+    # Always blocked in production even if SMTP is missing
+    monkeypatch.setenv("MEDILOCKER_ENV", "production")
+    r_prod = client.post("/api/auth/dev-login", json={"email": "deepugm12345@gmail.com"})
+    assert r_prod.status_code == 403

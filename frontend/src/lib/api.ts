@@ -150,6 +150,7 @@ export interface AuthUser {
 
 export interface AuthConfig {
   smtp_enabled: boolean;
+  dev_email_login_enabled?: boolean;
   google_enabled: boolean;
   google_client_id: string | null;
   google_redirect_uri: string | null;
@@ -312,6 +313,11 @@ export const api = {
     request<{ user: AuthUser; token: string }>("/api/auth/otp/verify", {
       method: "POST",
       body: JSON.stringify({ email, code, purpose: "login" }),
+    }),
+  devEmailLogin: (email: string) =>
+    request<{ user: AuthUser; token: string }>("/api/auth/dev-login", {
+      method: "POST",
+      body: JSON.stringify({ email }),
     }),
   googleLoginUrl: () => request<{ auth_url: string; state: string }>("/api/auth/google/login"),
   googleCallback: (code: string, state: string) =>

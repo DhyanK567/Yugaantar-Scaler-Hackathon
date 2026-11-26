@@ -57,9 +57,11 @@ from .auth import (
     ROLE_RESEARCHER,
     clear_session_cookie,
     create_google_auth_url,
+    dev_email_login,
     get_google_config,
     get_smtp_config,
     handle_google_callback,
+    is_dev_email_login_enabled,
     request_email_otp,
     require_org_access,
     require_roles,
@@ -155,6 +157,7 @@ def get_auth_config() -> Dict[str, Any]:
     google = get_google_config()
     return {
         "smtp_enabled": smtp["configured"],
+        "dev_email_login_enabled": is_dev_email_login_enabled(),
         "google_enabled": google["configured"],
         "google_client_id": google["client_id"] if google["configured"] else None,
         "google_redirect_uri": google["redirect_uri"] if google["configured"] else None,
@@ -231,6 +234,21 @@ class OtpVerifyBody(BaseModel):
     email: str
     code: str
     purpose: str = "login"
+
+
+class DevLoginBody(BaseModel):
+    email: str
+
+
+@app.post("/api/auth/dev-login")
+def auth_dev_login(body: DevLoginBody, request: Request, response: Response) -> Dict[str, Any]:
+    raw_token, ctx = dev_email_login(
+        body.email,
+        _client_ip(request),
+        request.headers.get("user-agent"),
+    )
+    set_session_cookie(response, raw_token)
+    return {"user": ctx, "token": raw_token}
 
 
 @app.post("/api/auth/otp/verify")

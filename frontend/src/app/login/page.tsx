@@ -24,6 +24,11 @@ export default function LoginPage() {
     setError("");
     setInfo("");
     try {
+      if (config && !config.smtp_enabled && config.dev_email_login_enabled) {
+        await api.devEmailLogin(email);
+        window.location.href = "/dashboard";
+        return;
+      }
       const res = await api.requestOtp(email);
       setInfo(res.message);
       setStep("otp");
@@ -184,12 +189,16 @@ export default function LoginPage() {
 
             <button
               type="submit"
-              disabled={loading || (config !== null && !config.smtp_enabled)}
+              disabled={
+                loading ||
+                (config !== null && !config.smtp_enabled && !config.dev_email_login_enabled)
+              }
               style={{
                 width: "100%",
                 padding: "12px",
                 background:
-                  loading || (config !== null && !config.smtp_enabled)
+                  loading ||
+                  (config !== null && !config.smtp_enabled && !config.dev_email_login_enabled)
                     ? "#777777"
                     : "#050505",
                 color: "#FFFFFF",
@@ -198,7 +207,8 @@ export default function LoginPage() {
                 fontSize: 14,
                 fontWeight: 600,
                 cursor:
-                  loading || (config !== null && !config.smtp_enabled)
+                  loading ||
+                  (config !== null && !config.smtp_enabled && !config.dev_email_login_enabled)
                     ? "not-allowed"
                     : "pointer",
                 display: "flex",
@@ -208,10 +218,19 @@ export default function LoginPage() {
               }}
             >
               <Mail size={15} />
-              {loading ? "Sending code…" : "Send verification code"}
+              {loading
+                ? "Signing in…"
+                : config && !config.smtp_enabled && config.dev_email_login_enabled
+                ? "Continue with Email"
+                : "Send verification code"}
             </button>
 
-            {config && !config.smtp_enabled && (
+            {config && !config.smtp_enabled && config.dev_email_login_enabled && (
+              <div style={{ fontSize: 11.5, color: "#666666", marginTop: 8 }}>
+                Local dev mode: SMTP is not configured, so any valid email signs in directly.
+              </div>
+            )}
+            {config && !config.smtp_enabled && !config.dev_email_login_enabled && (
               <div style={{ fontSize: 11.5, color: "#777777", marginTop: 8 }}>
                 Email OTP unavailable: SMTP_HOST is not configured on backend.
               </div>

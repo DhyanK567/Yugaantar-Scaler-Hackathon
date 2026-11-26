@@ -141,6 +141,84 @@ def send_otp_email(to_email: str, otp_code: str, expiry_minutes: int = 5) -> Non
             server.send_message(msg)
 
 
+def is_dev_email_login_enabled() -> bool:
+    """Allow direct email sign-in only in local development when SMTP is not configured."""
+    env = os.environ.get("MEDILOCKER_ENV", "development").lower()
+    if env == "production":
+        return False
+    return not get_smtp_config()["configured"]
+
+
+def dev_email_login(
+    email: str, ip_address: Optional[str], user_agent: Optional[str]
+) -> Tuple[str, Dict[str, Any]]:
+    if not is_dev_email_login_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="Direct email sign-in is disabled when SMTP is configured or in production.",
+        )
+    normalized = email.strip().lower()
+    if not EMAIL_RE.match(normalized):
+        raise HTTPException(status_code=400, detail="Invalid email format")
+
+    now = time.time()
+    with get_db() as conn:
+        user_row = conn.execute(
+            "SELECT id, status FROM users WHERE lower(email) = ?", (normalized,)
+        ).fetchone()
+        if user_row and user_row["status"] != "ACTIVE":
+            raise HTTPException(status_code=401, detail="Account is not active")
+        if user_row:
+            user_id = user_row["id"]
+        else:
+            user_id = f"usr-{secrets.token_hex(8)}"
+            display_name = normalized.split("@")[0]
+            conn.execute(
+                """
+                INSERT INTO users (id, email, full_name, status, platform_role, created_at)
+                VALUES (?, ?, ?, 'ACTIVE', 'USER', ?)
+                """,
+                (user_id, normalized, display_name, now),
+            )
+            first_org = conn.execute(
+                "SELECT id FROM organisations ORDER BY joined_at ASC LIMIT 1"
+            ).fetchone()
+            if first_org:
+                conn.execute(
+                    """
+                    INSERT INTO memberships (id, user_id, organisation_id, role, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (f"mem-{secrets.token_hex(8)}", user_id, first_org["id"], ROLE_PRIVACY_OFFICER, now),
+                )
+
+    ctx = load_user_context(user_id)
+    if not ctx:
+        raise HTTPException(status_code=401, detail="Account is not active")
+
+    raw_token, sess_meta = create_session(
+        user_id=user_id,
+        active_org_id=ctx["active_org_id"],
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+    ctx["session_id"] = sess_meta["session_id"]
+
+    record_audit_event(
+        action="LOGIN_DEV_EMAIL",
+        resource_type="session",
+        resource_id=sess_meta["session_id"],
+        outcome="SUCCESS",
+        actor_id=user_id,
+        actor_email=ctx["email"],
+        actor_role=ctx["active_role"],
+        organisation_id=ctx["active_org_id"],
+        details="Authenticated via local dev email sign-in (SMTP unconfigured)",
+        ip_address=ip_address,
+    )
+    return raw_token, ctx
+
+
 # ==============================================================================
 # Google OAuth Configuration
 # ==============================================================================
