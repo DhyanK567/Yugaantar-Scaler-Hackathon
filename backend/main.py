@@ -82,6 +82,15 @@ from .pipeline import (
     launch_job_async,
     run_attack_simulation_for_job,
 )
+from .services.pdf_reporting import (
+    PdfGenerationError,
+    PdfSecurityError,
+    generate_attack_simulation_pdf,
+    generate_audit_trail_pdf,
+    generate_clinical_integrity_pdf,
+    generate_privacy_intelligence_pdf,
+    generate_privacy_passport_pdf,
+)
 
 init_db()
 
@@ -705,6 +714,7 @@ def list_datasets(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str
             SELECT d.*, o.name as organisation_name,
                    (SELECT j.id FROM jobs j WHERE j.dataset_id = d.id ORDER BY j.created_at DESC LIMIT 1) as latest_job_id,
                    (SELECT j.status FROM jobs j WHERE j.dataset_id = d.id ORDER BY j.created_at DESC LIMIT 1) as latest_job_status,
+                   (SELECT j.release_decision FROM jobs j WHERE j.dataset_id = d.id ORDER BY j.created_at DESC LIMIT 1) as latest_release_decision,
                    (SELECT j.records_processed FROM jobs j WHERE j.dataset_id = d.id ORDER BY j.created_at DESC LIMIT 1) as records
             FROM datasets d
             JOIN organisations o ON o.id = d.organisation_id
@@ -1066,26 +1076,42 @@ def get_job_results(job_id: str, user: Dict[str, Any] = Depends(require_user)) -
 
 
 @app.get("/api/jobs/{job_id}/download")
-def download_job_outputs(job_id: str, user: Dict[str, Any] = Depends(require_user)):
+def download_job_outputs(job_id: str, request: Request, user: Dict[str, Any] = Depends(require_user)):
     job = get_job_detail(job_id, user)
     if job.get("organisation_id"):
         require_org_access(user, job["organisation_id"])
+    if job.get("release_decision") not in ("APPROVED", "APPROVED_WITH_WARNINGS") or job.get("status") not in ("COMPLETED", "COMPLETED_WITH_WARNINGS"):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Bundle download blocked: job status is {job.get('status')} (decision: {job.get('release_decision')})",
+        )
     job_output = JOBS_DIR / job_id / "output"
     sanitized_dir = job_output / "sanitized"
-    if not sanitized_dir.exists():
-        raise HTTPException(status_code=404, detail="Sanitized output not found for this job")
+    if not sanitized_dir.exists() or not (job_output / "report.json").exists() or not (job_output / "records.jsonl").exists():
+        raise HTTPException(status_code=404, detail="Complete sanitized output bundle not found for this job")
 
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for root, _, files in os.walk(str(sanitized_dir)):
             for f in files:
                 file_path = Path(root) / f
-                arcname = file_path.relative_to(sanitized_dir)
+                arcname = file_path.relative_to(sanitized_dir).as_posix()
                 zf.write(file_path, f"sanitized/{arcname}")
-        if (job_output / "report.json").exists():
-            zf.write(job_output / "report.json", "report.json")
-        if (job_output / "records.jsonl").exists():
-            zf.write(job_output / "records.jsonl", "records.jsonl")
+        zf.write(job_output / "report.json", "report.json")
+        zf.write(job_output / "records.jsonl", "records.jsonl")
+
+    record_audit_event(
+        action="BUNDLE_DOWNLOADED",
+        resource_type="job",
+        resource_id=job_id,
+        outcome="SUCCESS",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user.get("active_role"),
+        organisation_id=job.get("organisation_id"),
+        details=f"Downloaded approved release bundle ({job.get('release_decision')})",
+        ip_address=_client_ip(request),
+    )
 
     zip_buffer.seek(0)
     return StreamingResponse(
@@ -1120,6 +1146,26 @@ def get_privacy_assessment(assessment_id: str, user: Dict[str, Any] = Depends(re
         if row["organisation_id"]:
             require_org_access(user, row["organisation_id"])
     return dict(row)
+
+
+@app.get("/api/privacy/assessments/{assessment_id}/download")
+def download_privacy_assessment_pdf(
+    assessment_id: str,
+    format: str = Query("pdf", pattern="^pdf$"),
+    user: Dict[str, Any] = Depends(require_user),
+):
+    _ = get_privacy_assessment(assessment_id, user)
+    try:
+        pdf_bytes, fname = generate_privacy_intelligence_pdf(assessment_id)
+    except PdfGenerationError:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    except PdfSecurityError as exc:
+        raise HTTPException(status_code=422, detail=f"PDF blocked by security gate: {exc}")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
 
 
 @app.get("/api/privacy-intelligence")
@@ -1223,6 +1269,26 @@ def get_clinical_report(report_id: str, user: Dict[str, Any] = Depends(require_u
     return dict(row)
 
 
+@app.get("/api/clinical/reports/{report_id}/download")
+def download_clinical_report_pdf(
+    report_id: str,
+    format: str = Query("pdf", pattern="^pdf$"),
+    user: Dict[str, Any] = Depends(require_user),
+):
+    _ = get_clinical_report(report_id, user)
+    try:
+        pdf_bytes, fname = generate_clinical_integrity_pdf(report_id)
+    except PdfGenerationError:
+        raise HTTPException(status_code=404, detail="Clinical report not found")
+    except PdfSecurityError as exc:
+        raise HTTPException(status_code=422, detail=f"PDF blocked by security gate: {exc}")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
+
 @app.get("/api/threat-lab")
 def get_threat_lab(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
     org_ids = _authorised_org_ids(user)
@@ -1283,6 +1349,31 @@ def run_attack_simulator(
         ip_address=_client_ip(request),
     )
     return res
+
+
+@app.get("/api/attack-simulator/runs/{run_id}/download")
+def download_attack_simulation_pdf(
+    run_id: str,
+    format: str = Query("pdf", pattern="^pdf$"),
+    user: Dict[str, Any] = Depends(require_user),
+):
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM attack_runs WHERE id = ?", (run_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Attack simulation run not found")
+        if row["organisation_id"]:
+            require_org_access(user, row["organisation_id"])
+    try:
+        pdf_bytes, fname = generate_attack_simulation_pdf(run_id)
+    except PdfGenerationError:
+        raise HTTPException(status_code=404, detail="Attack simulation run not found")
+    except PdfSecurityError as exc:
+        raise HTTPException(status_code=422, detail=f"PDF blocked by security gate: {exc}")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
 
 
 @app.get("/api/passports")
@@ -1353,10 +1444,22 @@ def verify_passport(
 @app.get("/api/passports/{passport_id}/download")
 def download_passport(
     passport_id: str,
-    format: str = Query("json", pattern="^(json|html)$"),
+    format: str = Query("json", pattern="^(json|html|pdf)$"),
     user: Dict[str, Any] = Depends(require_user),
 ):
     data = get_passport(passport_id, user)
+    if format == "pdf":
+        try:
+            pdf_bytes, fname = generate_privacy_passport_pdf(passport_id)
+        except PdfGenerationError:
+            raise HTTPException(status_code=404, detail="Privacy Passport not found")
+        except PdfSecurityError as exc:
+            raise HTTPException(status_code=422, detail=f"PDF blocked by security gate: {exc}")
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={fname}"},
+        )
     if format == "json":
         return Response(
             content=json.dumps(
@@ -1544,6 +1647,40 @@ def list_audit_events(
             ).fetchall()
         ]
     return {"events": rows, "total": total, "page": page, "page_size": page_size}
+
+
+@app.get("/api/audit/export")
+def export_audit_trail_pdf(
+    organisation_id: Optional[str] = None,
+    start_ts: Optional[float] = None,
+    end_ts: Optional[float] = None,
+    user: Dict[str, Any] = Depends(require_user),
+):
+    target_org = organisation_id or user.get("active_org_id")
+    if target_org:
+        require_org_access(user, target_org)
+    elif user.get("platform_role") != ROLE_PLATFORM_ADMIN:
+        raise HTTPException(status_code=403, detail="Organisation access required")
+
+    org_name = "All Authorised Organisations"
+    if target_org:
+        with get_db() as conn:
+            orow = conn.execute("SELECT name FROM organisations WHERE id = ?", (target_org,)).fetchone()
+            org_name = orow["name"] if orow else target_org
+    try:
+        pdf_bytes, fname = generate_audit_trail_pdf(
+            organisation_id=target_org,
+            organisation_name=org_name,
+            start_ts=start_ts,
+            end_ts=end_ts,
+        )
+    except PdfSecurityError as exc:
+        raise HTTPException(status_code=422, detail=f"PDF blocked by security gate: {exc}")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
 
 
 @app.get("/api/settings")
