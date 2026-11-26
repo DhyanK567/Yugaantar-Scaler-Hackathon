@@ -47,6 +47,7 @@ HKDF_DOMAIN_DATE_SHIFT = b"medilocker:v1:date-shift"
 HKDF_DOMAIN_IDENTITY_LINK = b"medilocker:v1:identity-linking"
 HKDF_DOMAIN_MANIFEST = b"medilocker:v1:manifest-integrity"
 HKDF_DOMAIN_PASSPORT_AUTH = b"medilocker:v1:passport-auth"
+HKDF_DOMAIN_FILENAME = b"medilocker:v1:filename-pseudonym"
 
 
 def hkdf_extract(salt: Optional[bytes], ikm: bytes) -> bytes:
@@ -75,6 +76,25 @@ def hkdf_sha256(ikm: bytes, info: bytes, salt: Optional[bytes] = None, length: i
         raise InvalidSecretError("Input keying material (RAKSHA_SECRET) cannot be empty.")
     prk = hkdf_extract(salt or b"medilocker:hkdf:salt:v1", ikm)
     return hkdf_expand(prk, info, length=length)
+
+
+def pseudonymous_filename_token(rel_posix: str, raw_sha256: str, secret: bytes, length: int = 12) -> str:
+    """Derive a deterministic, domain-separated pseudonymous filename token.
+
+    Uses HKDF-SHA256 with HKDF_DOMAIN_FILENAME when secret is present so
+    output filenames never use an unsalted hash of patient identifiers and
+    change whenever RAKSHA_SECRET changes.
+    """
+    if secret:
+        fn_key = hkdf_sha256(secret, HKDF_DOMAIN_FILENAME)
+    else:
+        fn_key = hmac.new(b"medilocker:v1:filename-ephemeral", HKDF_DOMAIN_FILENAME, hashlib.sha256).digest()
+    msg = f"{rel_posix}|{raw_sha256}".encode("utf-8", errors="replace")
+    raw = hmac.new(fn_key, msg, hashlib.sha256).hexdigest()
+    # Format with 'fn' prefix and 'x' separator so >=6 consecutive digits can never occur
+    # (prevents false positives in Aadhaar/phone digit-pattern guards on passport artifacts).
+    token = f"fn{raw[:5]}x{raw[5:10]}"
+    return token[:length] if length <= len(token) else f"{token}{raw[10:10 + (length - len(token))]}"
 
 
 def validate_secret(secret: bytes | str, min_length: int = 8) -> bytes:

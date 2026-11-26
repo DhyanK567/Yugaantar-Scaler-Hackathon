@@ -33,6 +33,7 @@ from raksha_engine.linking import (
 )
 from raksha_engine.mitigation import MitigationRecord, plan_record_mitigation
 from raksha_engine.names import CorpusNameIndex, extract_names_from_text, is_clinical_phrase
+from raksha_engine.crypto import pseudonymous_filename_token
 from raksha_engine.patterns import classify_field, is_clinical_safe_field, normalize_digits
 from raksha_engine.privacy import age_band, generalize_pin, pseudonym, shift_date_string
 from raksha_engine.privacy_utility import (
@@ -503,11 +504,12 @@ def main() -> int:
             files_report.append(entry)
             continue
 
-        # Sanitize filename if it contains PII
-        out_rel = sanitize_filename(rel, name_index, sha)
+        # Sanitize filename using domain-separated secret-keyed pseudonymisation
+        out_rel = sanitize_filename(rel, name_index, sha, secret=SECRET)
         if out_rel in used_out_paths:
             p = Path(out_rel)
-            out_rel = (p.parent / f"{p.stem}_{sha[:6]}{p.suffix}").as_posix()
+            col_tok = pseudonymous_filename_token(f"collision:{rel}", sha, SECRET, length=8)
+            out_rel = (p.parent / f"{p.stem}_{col_tok}{p.suffix}").as_posix()
         used_out_paths.add(out_rel)
 
         try:

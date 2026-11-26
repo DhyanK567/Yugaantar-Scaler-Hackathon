@@ -65,6 +65,7 @@ $TestSuites = @(
     @{ Name = "Clinical Drift"; Cmd = { python tests/clinical_drift/test_clinical_drift.py } },
     @{ Name = "Privacy Attacks"; Cmd = { python tests/privacy_attacks/test_privacy_attacks.py } },
     @{ Name = "Cryptography Security"; Cmd = { python tests/cryptography/test_crypto_security.py } },
+    @{ Name = "Filename Privacy (M16.1)"; Cmd = { python tests/cryptography/test_filename_privacy.py } },
     @{ Name = "Multilingual PII"; Cmd = { python tests/multilingual/test_multilingual_pii.py } },
     @{ Name = "Independent Benchmark"; Cmd = { python tests/independent_benchmark/test_independent_benchmark.py } },
     @{ Name = "Full Pipeline Integration"; Cmd = { python tests/integration/test_full_pipeline_integration.py } },
