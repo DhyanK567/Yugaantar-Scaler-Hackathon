@@ -30,16 +30,23 @@ def shift_date(value: dt.date, patient_key: str, secret: bytes, max_days: int = 
     return value + dt.timedelta(days=date_shift_days(patient_key, secret, max_days))
 
 
+_ISO_DATE_RX = re.compile(r"(19\d{2}|20\d{2})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])")
+_SLASH_DATE_RX = re.compile(r"(\d{1,2})/(\d{1,2})/(19\d{2}|20\d{2})")
+_DASH_DATE_RX = re.compile(r"(\d{1,2})-(\d{1,2})-(19\d{2}|20\d{2})")
+_TEXT_ISO_RX = re.compile(r"\b(?:19\d{2}|20\d{2})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])\b")
+_TEXT_DMY_RX = re.compile(r"\b\d{1,2}[/-]\d{1,2}[/-](?:19\d{2}|20\d{2})\b")
+
+
 def parse_date_str(s: str) -> tuple[dt.date, str] | None:
     """Parse common date formats and return (date, fmt_style)."""
     s = s.strip()
-    m = re.fullmatch(r"(19\d{2}|20\d{2})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])", s)
+    m = _ISO_DATE_RX.fullmatch(s)
     if m:
         try:
             return dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3))), "iso"
         except ValueError:
             return None
-    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(19\d{2}|20\d{2})", s)
+    m = _SLASH_DATE_RX.fullmatch(s)
     if m:
         a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
         # Disambiguate DD/MM/YYYY vs MM/DD/YYYY
@@ -57,7 +64,7 @@ def parse_date_str(s: str) -> tuple[dt.date, str] | None:
             return dt.date(y, b, a), "dmy_slash"
         except ValueError:
             return None
-    m = re.fullmatch(r"(\d{1,2})-(\d{1,2})-(19\d{2}|20\d{2})", s)
+    m = _DASH_DATE_RX.fullmatch(s)
     if m:
         a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
         if b > 12 and 1 <= a <= 12:
@@ -94,14 +101,17 @@ def shift_date_string(s: str, patient_key: str, secret: bytes, max_days: int = 1
 
 def shift_dates_in_text(text: str, patient_key: str, secret: bytes, max_days: int = 180) -> str:
     """Shift ISO and slash/dash dates in free text using the same per-patient offset."""
+    if len(text) < 8 or not any(c.isdigit() for c in text):
+        return text
+
     def _rep_iso(m: re.Match[str]) -> str:
         return shift_date_string(m.group(0), patient_key, secret, max_days)
 
     def _rep_dmy(m: re.Match[str]) -> str:
         return shift_date_string(m.group(0), patient_key, secret, max_days)
 
-    text = re.sub(r"\b(?:19\d{2}|20\d{2})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])\b", _rep_iso, text)
-    text = re.sub(r"\b\d{1,2}[/-]\d{1,2}[/-](?:19\d{2}|20\d{2})\b", _rep_dmy, text)
+    text = _TEXT_ISO_RX.sub(_rep_iso, text)
+    text = _TEXT_DMY_RX.sub(_rep_dmy, text)
     return text
 
 

@@ -705,7 +705,9 @@ def main() -> int:
         "timing": {"seconds": round(time.monotonic() - t0, 2)},
         "resources": {"peak_rss_mb": _peak_rss_mb()},
     }
-    (out / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    report_tmp = out / ".report.json.tmp"
+    report_tmp.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    os.replace(report_tmp, out / "report.json")
     print(f"files {len(files_report)} sanitized {n_san} quarantined {len(files_report) - n_san} records {len(records)}")
     return 0
 
