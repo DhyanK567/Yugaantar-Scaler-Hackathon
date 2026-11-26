@@ -264,6 +264,8 @@ def redact_names_in_text(
     """Redact labeled names, honorific names, relatives, and corpus-known names
     while strictly preserving Doctor names and clinical phrases.
     """
+    if len(text) < 3 or not any(c.isalpha() for c in text):
+        return text, 0
     count = 0
     # 1. Protect "Dr. <Name>" and clinical organization/department spans with temporary placeholders
     doc_spans: list[str] = []
@@ -272,7 +274,7 @@ def redact_names_in_text(
         doc_spans.append(m.group(0))
         return f"__RAKSHA_DOC_{len(doc_spans) - 1}__"
 
-    work = RX_DOCTOR.sub(_save_doc, text)
+    work = RX_DOCTOR.sub(_save_doc, text) if ("dr" in text.casefold() or "डॉ" in text) else text
     work = RX_ORG_PHRASE.sub(_save_doc, work)
 
     # 1. Relatives: S/o, D/o, W/o, H/o, पिता, माता, पति, पत्नी, etc.
