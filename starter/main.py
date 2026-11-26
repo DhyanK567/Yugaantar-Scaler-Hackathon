@@ -162,7 +162,7 @@ def main() -> int:
     a = ap.parse_args()
 
     t0 = time.monotonic()
-    inp, out = Path(a.input), Path(a.output)
+    inp, out = Path(a.input.strip("'\"")), Path(a.output.strip("'\""))
     san = out / "sanitized"
     san.mkdir(parents=True, exist_ok=True)
 
@@ -489,7 +489,8 @@ def main() -> int:
 
             dest = san / out_rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(out_text, encoding="utf-8", newline="")
+            with open(dest, "w", encoding="utf-8", newline="") as f:
+                f.write(out_text)
             entry.update(output=f"sanitized/{out_rel}", status="sanitized")
 
         except (ValueError, RecursionError, UnicodeError, csv.Error) as exc:
