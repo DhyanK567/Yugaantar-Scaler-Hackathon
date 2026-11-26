@@ -6,6 +6,7 @@ import { FileKey2, Download, ShieldCheck, AlertTriangle } from "lucide-react";
 export default function PrivacyPassportsPage() {
   const [passports, setPassports] = useState<Passport[]>([]);
   const [verifyMsg, setVerifyMsg] = useState<Record<string, string>>({});
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   function load() {
@@ -182,6 +183,35 @@ export default function PrivacyPassportsPage() {
                   <Download size={13} />
                   HTML
                 </a>
+                <button
+                  disabled={downloadingId === p.id}
+                  onClick={async () => {
+                    setDownloadingId(p.id);
+                    setError("");
+                    try {
+                      await api.downloadPdf(api.downloadPassportUrl(p.id, "pdf"), `MediLocker_Privacy_Passport_${p.id}.pdf`);
+                    } catch (e: unknown) {
+                      setError(e instanceof Error ? e.message : String(e));
+                    }
+                    setDownloadingId(null);
+                  }}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    padding: "7px 12px",
+                    background: "#050505",
+                    border: "none",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    color: "#FFFFFF",
+                    fontWeight: 600,
+                    cursor: downloadingId === p.id ? "wait" : "pointer",
+                  }}
+                >
+                  <Download size={13} />
+                  {downloadingId === p.id ? "Generating…" : "Download PDF"}
+                </button>
               </div>
             </div>
           ))}

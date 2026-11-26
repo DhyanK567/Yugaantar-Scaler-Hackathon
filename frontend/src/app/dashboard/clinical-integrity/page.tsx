@@ -1,10 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, type ClinicalReport } from "@/lib/api";
-import { HeartPulse, CheckCircle2, AlertTriangle } from "lucide-react";
+import { HeartPulse, CheckCircle2, AlertTriangle, Download } from "lucide-react";
 
 export default function ClinicalIntegrityPage() {
   const [reports, setReports] = useState<ClinicalReport[]>([]);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -93,7 +94,7 @@ export default function ClinicalIntegrityPage() {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ borderBottom: "1px solid #EEEEEE" }}>
-                {["Report ID", "Job ID", "Preserved / Expected", "Modified", "Missing", "FHIR R4", "Created"].map((h) => (
+                {["Report ID", "Job ID", "Preserved / Expected", "Modified", "Missing", "FHIR R4", "Created", ""].map((h) => (
                   <th key={h} style={{ padding: "10px 16px", textAlign: "left", fontSize: 11.5, color: "#777777" }}>
                     {h}
                   </th>
@@ -113,6 +114,37 @@ export default function ClinicalIntegrityPage() {
                   <td style={{ padding: "11px 16px", fontSize: 12, fontWeight: 600 }}>{r.fhir_integrity}</td>
                   <td style={{ padding: "11px 16px", fontSize: 12, color: "#777777" }}>
                     {new Date(r.created_at * 1000).toLocaleString()}
+                  </td>
+                  <td style={{ padding: "11px 16px", textAlign: "right" }}>
+                    <button
+                      disabled={downloadingId === r.id}
+                      onClick={async () => {
+                        setDownloadingId(r.id);
+                        setError("");
+                        try {
+                          await api.downloadPdf(api.downloadClinicalReportPdfUrl(r.id), `MediLocker_Clinical_Integrity_${r.id}.pdf`);
+                        } catch (e: unknown) {
+                          setError(e instanceof Error ? e.message : String(e));
+                        }
+                        setDownloadingId(null);
+                      }}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
+                        padding: "5px 10px",
+                        background: "#050505",
+                        color: "#FFFFFF",
+                        border: "none",
+                        borderRadius: 5,
+                        fontSize: 11.5,
+                        fontWeight: 600,
+                        cursor: downloadingId === r.id ? "wait" : "pointer",
+                      }}
+                    >
+                      <Download size={12} />
+                      {downloadingId === r.id ? "Generating…" : "Export Clinical Report"}
+                    </button>
                   </td>
                 </tr>
               ))}

@@ -398,8 +398,40 @@ export const api = {
       `/api/passports/${id}/verify`,
       { method: "POST" }
     ),
-  downloadPassportUrl: (id: string, format: "json" | "html") =>
+  downloadPassportUrl: (id: string, format: "json" | "html" | "pdf") =>
     `${API_BASE}/api/passports/${id}/download?format=${format}`,
+  downloadAssessmentPdfUrl: (id: string) =>
+    `${API_BASE}/api/privacy/assessments/${id}/download?format=pdf`,
+  downloadAttackRunPdfUrl: (id: string) =>
+    `${API_BASE}/api/attack-simulator/runs/${id}/download?format=pdf`,
+  downloadClinicalReportPdfUrl: (id: string) =>
+    `${API_BASE}/api/clinical/reports/${id}/download?format=pdf`,
+  exportAuditPdfUrl: () => `${API_BASE}/api/audit/export`,
+  downloadPdf: async (url: string, fallbackFilename: string): Promise<void> => {
+    const res = await fetch(url, { credentials: "include" });
+    if (!res.ok) {
+      let msg = `Download failed (${res.status})`;
+      try {
+        const body = await res.json();
+        msg = body.detail || body.message || msg;
+      } catch {
+        // ignore
+      }
+      throw new ApiError(res.status, msg);
+    }
+    const blob = await res.blob();
+    const disp = res.headers.get("Content-Disposition") || "";
+    const match = disp.match(/filename=([^;]+)/i);
+    const filename = match ? match[1].trim().replace(/^"|"$/g, "") : fallbackFilename;
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objUrl);
+  },
 
   // Research
   researchRequests: () => request<ResearchRequest[]>("/api/research/requests"),

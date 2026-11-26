@@ -1,10 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, type PrivacyIntelligence } from "@/lib/api";
-import { Brain, AlertTriangle } from "lucide-react";
+import { Brain, AlertTriangle, Download } from "lucide-react";
 
 export default function PrivacyIntelligencePage() {
   const [intel, setIntel] = useState<PrivacyIntelligence | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -90,7 +91,7 @@ export default function PrivacyIntelligencePage() {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ borderBottom: "1px solid #EEEEEE" }}>
-                {["Assessment ID", "Job ID", "PII Detected", "Residual Leaks", "Canary", "QI Risk", "Release Eligible"].map((h) => (
+                {["Assessment ID", "Job ID", "PII Detected", "Residual Leaks", "Canary", "QI Risk", "Release Eligible", ""].map((h) => (
                   <th key={h} style={{ padding: "10px 16px", textAlign: "left", fontSize: 11.5, color: "#777777" }}>
                     {h}
                   </th>
@@ -110,6 +111,37 @@ export default function PrivacyIntelligencePage() {
                   <td style={{ padding: "11px 16px", fontSize: 13 }}>{a.qi_risk_score}% ({a.reid_risk_level})</td>
                   <td style={{ padding: "11px 16px", fontSize: 12, fontWeight: 600 }}>
                     {a.release_eligible ? "YES" : "NO"}
+                  </td>
+                  <td style={{ padding: "11px 16px", textAlign: "right" }}>
+                    <button
+                      disabled={downloadingId === a.id}
+                      onClick={async () => {
+                        setDownloadingId(a.id);
+                        setError("");
+                        try {
+                          await api.downloadPdf(api.downloadAssessmentPdfUrl(a.id), `MediLocker_Privacy_Intelligence_${a.id}.pdf`);
+                        } catch (e: unknown) {
+                          setError(e instanceof Error ? e.message : String(e));
+                        }
+                        setDownloadingId(null);
+                      }}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
+                        padding: "5px 10px",
+                        background: "#050505",
+                        color: "#FFFFFF",
+                        border: "none",
+                        borderRadius: 5,
+                        fontSize: 11.5,
+                        fontWeight: 600,
+                        cursor: downloadingId === a.id ? "wait" : "pointer",
+                      }}
+                    >
+                      <Download size={12} />
+                      {downloadingId === a.id ? "Generating…" : "Export Assessment PDF"}
+                    </button>
                   </td>
                 </tr>
               ))}
