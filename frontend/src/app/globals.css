@@ -1,29 +1,55 @@
 @import "tailwindcss";
 
 :root {
-  --background: #070d18;
-  --foreground: #f1f5f9;
+  --bg-primary: #F2F2F2;
+  --bg-white: #FFFFFF;
+  --text-primary: #050505;
+  --bg-secondary: #E6E6E6;
+  --border: #DCDCDC;
+  --text-muted: #777777;
+  --font-sans: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  background-color: #070d18;
-  color: #f1f5f9;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
 }
 
-/* Custom scrollbars */
+/* Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 ::-webkit-scrollbar-track {
-  background: #0b132b;
+  background: var(--bg-secondary);
 }
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
+  background: var(--border);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #0284c7;
+  background: var(--text-muted);
+}
+
+/* Selection */
+::selection {
+  background-color: #050505;
+  color: #FFFFFF;
+}
+
+/* Transitions */
+a, button {
+  transition: all 0.15s ease;
 }
