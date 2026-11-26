@@ -36,6 +36,8 @@ from .patterns import (
 from .privacy import age_band, generalize_pin, shift_date_string, shift_dates_in_text
 
 _B64_RX = re.compile(r"[A-Za-z0-9+/]{24,}={0,2}")
+_AGE_GENDER_RX = re.compile(r"\b(\d{1,3})(\s*(?:Y|yrs|years)\s*/\s*[MF])\b", re.IGNORECASE)
+_AGE_LABEL_RX = re.compile(r"(?<![A-Za-z\u0900-\u097f])((?:Age|आयु|उम्र)\s*[:\-]?\s*)(\d{1,3})(\s*(?:yrs|years|वर्ष)?)", re.IGNORECASE)
 
 
 def sanitize_base64_in_text(
@@ -85,7 +87,7 @@ def sanitize_free_text(
     total = 0
     work = normalize_digits(text)
 
-    if decode_b64:
+    if decode_b64 and len(work) >= 24:
         work, n_b64 = sanitize_base64_in_text(
             work, name_index, patient_key, secret, max_days, local_first_names=local_first_names
         )
@@ -95,29 +97,35 @@ def sanitize_free_text(
     work, n_names = redact_names_in_text(work, name_index, local_first_names=local_first_names)
     total += n_names
 
+    has_digit = any(ch.isdigit() for ch in work)
+    has_at = "@" in work
+
     # 2. Direct identifiers (longest/most specific first)
-    for tag, rx in (
-        ("[ABHA_NUMBER]", RX_ABHA_NUM),
-        ("[ABHA_ADDRESS]", RX_ABHA_ADDR),
-        ("[AADHAAR]", RX_AADHAAR),
-        ("[AADHAAR_MASKED]", RX_AADHAAR_MASKED),
-        ("[INSURANCE_ID]", RX_INSURANCE),
-        ("[MRN]", RX_MRN),
-        ("[PHONE]", RX_PHONE),
-        ("[PHONE_MASKED]", RX_PHONE_MASKED),
-        ("[EMAIL]", RX_EMAIL),
-        ("[PAN]", RX_PAN),
-    ):
-        work, n = rx.subn(tag, work)
-        total += n
+    if has_at:
+        for tag, rx in (("[ABHA_ADDRESS]", RX_ABHA_ADDR), ("[EMAIL]", RX_EMAIL)):
+            work, n = rx.subn(tag, work)
+            total += n
+    if has_digit:
+        for tag, rx in (
+            ("[ABHA_NUMBER]", RX_ABHA_NUM),
+            ("[AADHAAR]", RX_AADHAAR),
+            ("[AADHAAR_MASKED]", RX_AADHAAR_MASKED),
+            ("[INSURANCE_ID]", RX_INSURANCE),
+            ("[MRN]", RX_MRN),
+            ("[PHONE]", RX_PHONE),
+            ("[PHONE_MASKED]", RX_PHONE_MASKED),
+            ("[PAN]", RX_PAN),
+        ):
+            work, n = rx.subn(tag, work)
+            total += n
 
-    # 3. DOB labels
-    def _sub_dob(m: re.Match[str]) -> str:
-        nonlocal total
-        total += 1
-        return m.group(0).replace(m.group(1), "[DOB]")
+        # 3. DOB labels
+        def _sub_dob(m: re.Match[str]) -> str:
+            nonlocal total
+            total += 1
+            return m.group(0).replace(m.group(1), "[DOB]")
 
-    work = RX_DOB_LABEL.sub(_sub_dob, work)
+        work = RX_DOB_LABEL.sub(_sub_dob, work)
 
     # 4. Address components & PIN generalization (skip Ward/PIN on clinical-safe fields)
     for tag, rx in (
@@ -145,30 +153,22 @@ def sanitize_free_text(
 
         work = RX_VILLAGE_BEFORE_TEHSIL.sub(_sub_village_tehsil, work)
 
-        def _sub_pin(m: re.Match[str]) -> str:
-            nonlocal total
-            total += 1
-            return generalize_pin(m.group(0))
+        if has_digit:
+            def _sub_pin(m: re.Match[str]) -> str:
+                nonlocal total
+                total += 1
+                return generalize_pin(m.group(0))
 
-        work = RX_PIN.sub(_sub_pin, work)
+            work = RX_PIN.sub(_sub_pin, work)
 
     # 5. Age generalization in text (e.g., "48 Y / F" -> "45-49 Y / F", "आयु: 39 वर्ष" -> "आयु: 35-39 वर्ष")
-    work = re.sub(
-        r"\b(\d{1,3})(\s*(?:Y|yrs|years)\s*/\s*[MF])\b",
-        lambda m: f"{age_band(int(m.group(1)))}{m.group(2)}",
-        work,
-        flags=re.IGNORECASE,
-    )
-    work = re.sub(
-        r"(?<![A-Za-z\u0900-\u097f])((?:Age|आयु|उम्र)\s*[:\-]?\s*)(\d{1,3})(\s*(?:yrs|years|वर्ष)?)",
-        lambda m: f"{m.group(1)}{age_band(int(m.group(2)))}{m.group(3)}",
-        work,
-        flags=re.IGNORECASE,
-    )
+    if has_digit:
+        work = _AGE_GENDER_RX.sub(lambda m: f"{age_band(int(m.group(1)))}{m.group(2)}", work)
+        work = _AGE_LABEL_RX.sub(lambda m: f"{m.group(1)}{age_band(int(m.group(2)))}{m.group(3)}", work)
 
-    # 6. Per-patient date shifting (only if we have a key; fallback to deterministic record key)
-    if patient_key:
-        work = shift_dates_in_text(work, patient_key, secret, max_days)
+        # 6. Per-patient date shifting (only if we have a key; fallback to deterministic record key)
+        if patient_key:
+            work = shift_dates_in_text(work, patient_key, secret, max_days)
 
     return work, total
 

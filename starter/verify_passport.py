@@ -47,7 +47,7 @@ def _resolve_sanitized_root(output_arg: Path) -> Path:
 
 
 def _check_expiry(expires_at: Any) -> tuple[bool, str | None]:
-    if not isinstance(expires_at, str) or not expires_at or expires_at == "NOT_MEASURED":
+    if not isinstance(expires_at, str) or not expires_at or expires_at in ("NOT_MEASURED", "NOT_SET"):
         return True, None
     try:
         exp_dt = dt.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
