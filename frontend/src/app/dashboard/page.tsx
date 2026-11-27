@@ -2,25 +2,25 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, Lock } from "lucide-react";
-import { api, ApiError, type AuthUser, type DashboardOverview } from "@/lib/api";
+import { AlertTriangle } from "lucide-react";
+import { api, type DashboardOverview, type PrivacyIntelligence } from "@/lib/api";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { ReleaseReadinessPanel } from "@/components/dashboard/ReleaseReadinessPanel";
 import { GettingStartedPanel } from "@/components/dashboard/GettingStartedPanel";
-import { MetricGrid } from "@/components/dashboard/MetricGrid";
 import { PrivacyPerformanceOverview } from "@/components/dashboard/PrivacyPerformanceOverview";
 import { ProcessingWorkflow } from "@/components/dashboard/ProcessingWorkflow";
 import { RecentJobsPanel } from "@/components/dashboard/RecentJobsPanel";
 import { AuditEventsPanel } from "@/components/dashboard/AuditEventsPanel";
+import { PrivacyTrendChart } from "@/components/charts/PrivacyTrendChart";
+import { ProcessingPerformanceChart } from "@/components/charts/ProcessingPerformanceChart";
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardOverview | null>(null);
-  const [user, setUser] = useState<AuthUser | null>(null);
+  const [intel, setIntel] = useState<PrivacyIntelligence | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [error, setError] = useState("");
-  const [unauth, setUnauth] = useState(false);
 
   const loadDashboard = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
@@ -29,16 +29,14 @@ export default function DashboardPage() {
     } else setLoading(true);
     setError("");
     try {
-      const [dash, me] = await Promise.all([api.dashboard(), api.me()]);
+      const [dash, pi] = await Promise.all([
+        api.dashboard(),
+        api.privacyIntelligence().catch(() => null),
+      ]);
       setData(dash);
-      setUser(me.user);
-      setUnauth(false);
+      setIntel(pi);
     } catch (e: unknown) {
-      if (e instanceof ApiError && e.status === 401) {
-        setUnauth(true);
-      } else {
-        setError(e instanceof Error ? e.message : String(e));
-      }
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -52,31 +50,7 @@ export default function DashboardPage() {
     return () => clearTimeout(id);
   }, [loadDashboard]);
 
-  if (unauth) {
-    return (
-      <div className="py-16 max-w-md mx-auto text-center">
-        <div className="bg-white border border-[#E6E6E6] rounded-2xl p-9 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
-          <Lock size={28} className="text-[#050505] mx-auto mb-3.5" />
-          <h1 className="text-[20px] font-bold text-[#050505] mb-2">
-            Sign in required
-          </h1>
-          <p className="text-[13.5px] text-[#666666] mb-6">
-            Authenticate to access organisation-scoped privacy telemetry.
-          </p>
-          <Link
-            href="/login"
-            className="inline-block px-6 py-2.5 rounded-xl bg-[#050505] text-white text-[13.5px] font-semibold hover:bg-[#222222]"
-          >
-            Go to Sign In
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
-  const activeOrgName =
-    user?.memberships.find((m) => m.organisation_id === user.active_org_id)
-      ?.organisation_name ?? undefined;
+  const activeOrgName = "Local Workspace";
 
   const hasProcessedData =
     (data?.metrics.files_processed.value ?? 0) > 0 ||
@@ -114,6 +88,58 @@ export default function DashboardPage() {
 
             {/* D0. DATASET-AWARE PRIVACY PERFORMANCE OVERVIEW */}
             <PrivacyPerformanceOverview externalRefreshKey={refreshKey} />
+
+            {/* D1. GRAPHICAL ANALYTICS & OPERATIONAL KPIS */}
+            {(() => {
+              const totalRecords = data.metrics.records_processed.value ?? 0;
+              const piiDetected = intel?.total_pii_detected ?? (data.metrics.pii_detected.value ?? 0);
+              const residual = intel?.total_residual_leakage ?? 0;
+              const sanRate =
+                piiDetected > 0
+                  ? `${(((piiDetected - residual) / piiDetected) * 100).toFixed(1)}%`
+                  : "Not measured";
+              const totalQuarantined = data.recent_jobs.reduce(
+                (acc, j) => acc + (j.files_quarantined ?? 0),
+                0
+              );
+              const kpis = [
+                { label: "Total Records Processed", value: totalRecords > 0 ? totalRecords.toLocaleString() : "0" },
+                { label: "PII Entities Detected", value: piiDetected > 0 ? piiDetected.toLocaleString() : "0" },
+                { label: "Sanitisation Success Rate", value: sanRate },
+                { label: "Files Quarantined", value: String(totalQuarantined) },
+                { label: "Clinical Preservation", value: data.metrics.clinical_preserved.display },
+                { label: "Latest Job Status", value: data.privacy_health.latest_job_status || "NOT_RUN" },
+              ];
+              return (
+                <section aria-label="Privacy Graphical Analytics" className="space-y-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                    {kpis.map((k) => (
+                      <div key={k.label} className="bg-white border border-[#DADADA] rounded-xl p-4">
+                        <div className="text-[10.5px] font-semibold uppercase tracking-[0.06em] text-[#666666]">
+                          {k.label}
+                        </div>
+                        <div className="font-serif-display text-[22px] text-[#090909] mt-1 truncate">
+                          {k.value}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+                    <PrivacyTrendChart
+                      jobs={data.recent_jobs}
+                      assessments={intel?.assessments ?? []}
+                      loading={loading}
+                      lastUpdated={data.freshness}
+                    />
+                    <ProcessingPerformanceChart
+                      jobs={data.recent_jobs}
+                      loading={loading}
+                      lastUpdated={data.freshness}
+                    />
+                  </div>
+                </section>
+              );
+            })()}
 
             {/* D. FOUR KEY METRICS */}
             <section aria-label="Four Key Metrics">

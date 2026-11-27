@@ -1,17 +1,29 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type ClinicalReport } from "@/lib/api";
+import { api, type ClinicalReport, type FileFormatBreakdown } from "@/lib/api";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState, ErrorState } from "@/components/ui/StatePanels";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { ClinicalIntegrityChart } from "@/components/charts/ClinicalIntegrityChart";
 
 export default function ClinicalIntegrityPage() {
   const [reports, setReports] = useState<ClinicalReport[]>([]);
+  const [filesByFormat, setFilesByFormat] = useState<FileFormatBreakdown[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api.clinicalReports().then(setReports).catch((e) => setError(e.message));
+    Promise.all([
+      api.clinicalReports(),
+      api.privacyIntelligence().catch(() => null),
+    ])
+      .then(([repList, pi]) => {
+        setReports(repList);
+        setFilesByFormat(pi?.files_by_format ?? []);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
   }, []);
 
   const totalExpected = reports.reduce((s, r) => s + r.expected_values, 0);
@@ -73,6 +85,13 @@ export default function ClinicalIntegrityPage() {
           </div>
         </div>
       </div>
+
+      <ClinicalIntegrityChart
+        reports={reports}
+        filesByFormat={filesByFormat}
+        loading={loading}
+        lastUpdated={latest?.created_at}
+      />
 
       <div className="bg-white border border-[#DADADA] rounded-2xl overflow-hidden">
         <div className="px-6 py-4 border-b border-[#E5E5E5]">

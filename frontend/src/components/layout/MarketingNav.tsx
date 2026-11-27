@@ -47,13 +47,7 @@ export default function MarketingNav() {
         {/* Right: Actions */}
         <div className="flex items-center gap-4 shrink-0">
           <Link
-            href="/login"
-            className="hidden sm:inline-block text-[13.5px] font-medium text-[#090909] hover:text-[#666666] transition-colors"
-          >
-            Sign in
-          </Link>
-          <Link
-            href="/register"
+            href="/dashboard"
             className="px-4 py-2 rounded-full bg-[#090909] text-white text-[13px] font-medium hover:bg-[#222222] transition-colors"
           >
             Get started
@@ -82,11 +76,11 @@ export default function MarketingNav() {
             </Link>
           ))}
           <Link
-            href="/login"
+            href="/dashboard"
             onClick={() => setOpen(false)}
             className="block text-[14px] font-medium text-[#090909] py-1"
           >
-            Sign in
+            Get started
           </Link>
         </div>
       )}

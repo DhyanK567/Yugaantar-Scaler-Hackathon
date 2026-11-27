@@ -5,6 +5,7 @@ import { api, type AuditEvent } from "@/lib/api";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState, ErrorState } from "@/components/ui/StatePanels";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { AuditActivityChart } from "@/components/charts/AuditActivityChart";
 import { RefreshCw } from "lucide-react";
 
 export default function AuditPage() {
@@ -51,6 +52,8 @@ export default function AuditPage() {
       />
 
       {error && <ErrorState message={error} />}
+
+      <AuditActivityChart events={events} />
 
       <div className="bg-white border border-[#DADADA] rounded-2xl overflow-hidden">
         <div className="px-6 py-4 border-b border-[#E5E5E5] flex items-center justify-between">

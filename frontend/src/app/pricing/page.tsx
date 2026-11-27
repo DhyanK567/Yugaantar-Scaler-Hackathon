@@ -12,7 +12,7 @@ const PLANS = [
     price: { monthly: "Free", annually: "Free" },
     description: "For individual researchers and offline evaluation.",
     cta: "Get started",
-    ctaHref: "/register",
+    ctaHref: "/dashboard",
     dark: false,
     features: [
       "Offline CPU-only CLI & local console",
@@ -29,7 +29,7 @@ const PLANS = [
     suffix: "/mo",
     description: "For hospitals, diagnostic labs and clinical registries.",
     cta: "Get started",
-    ctaHref: "/register",
+    ctaHref: "/dashboard",
     dark: true,
     badge: "RECOMMENDED",
     features: [

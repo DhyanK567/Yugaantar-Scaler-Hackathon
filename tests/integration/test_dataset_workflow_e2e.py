@@ -49,9 +49,6 @@ class TestDatasetWorkflowE2E(unittest.TestCase):
                     "INSERT INTO organisations (id, name, org_type, joined_at) VALUES (?, 'Metro General Hospital', 'Hospital', 1.0)",
                     (cls.org_id,),
                 )
-            conn.execute(
-                "INSERT OR IGNORE INTO users (id, email, full_name, status, platform_role, created_at) VALUES ('usr-test', 'test@medilocker.local', 'Test User', 'ACTIVE', 'PLATFORM_ADMIN', 1.0)"
-            )
 
     @classmethod
     def tearDownClass(cls) -> None:

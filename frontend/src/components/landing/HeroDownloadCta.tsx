@@ -114,7 +114,7 @@ export function HeroDownloadCta() {
       {/* Row 2: Full-width Get Started Free button */}
       <div className="mt-3 w-full">
         <Link
-          href="/register"
+          href="/dashboard"
           className={`${baseBtnClass} bg-[#090909] text-white border border-[#090909] hover:bg-[#222222]`}
         >
           <span>Get Started Free</span>

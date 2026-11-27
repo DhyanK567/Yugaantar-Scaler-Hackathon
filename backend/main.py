@@ -1,7 +1,7 @@
-"""MediLocker Healthcare Privacy Platform Backend API (Milestone 17).
+"""MediLocker Healthcare Privacy Platform Backend API.
 Built with FastAPI.
-- Web authentication (SMTP Email OTP + Google OAuth 2.0/OIDC + RBAC) is decoupled
-  from the offline privacy engine (starter/main.py).
+- Direct local workspace access (no login, OTP, SMTP, or external auth required)
+  coupled with the offline privacy engine (starter/main.py).
 - All dashboard, privacy, clinical, identity, passport, and audit endpoints are
   backed by real SQLite persistence and real engine execution.
 """
@@ -55,32 +55,42 @@ from .dashboard_metrics import (
     get_dashboard_metrics_summary,
     get_runtime_execution_compliance,
 )
-from .auth import (
-    ROLE_AUDITOR,
-    ROLE_ORG_ADMIN,
-    ROLE_PLATFORM_ADMIN,
-    ROLE_PRIVACY_OFFICER,
-    ROLE_RESEARCHER,
-    clear_session_cookie,
-    create_google_auth_url,
-    dev_email_login,
-    get_google_config,
-    get_smtp_config,
-    get_operating_mode,
-    handle_google_callback,
-    is_dev_email_login_enabled,
-    is_judge_mode,
-    is_offline_mode_enabled,
-    offline_demo_login,
-    request_email_otp,
-    require_org_access,
-    require_roles,
-    require_user,
-    revoke_session_by_token,
-    set_session_cookie,
-    user_has_org_access,
-    verify_email_otp,
-)
+_WORKSPACE_ACTOR: Dict[str, Any] = {
+    "id": "local-workspace",
+    "email": "workspace@medilocker.local",
+    "full_name": "Local Workspace",
+    "platform_role": "WORKSPACE_ADMIN",
+    "active_role": "WORKSPACE_ADMIN",
+    "active_org_id": "org-hosp-a",
+    "memberships": [],
+}
+
+# Role constants (workspace mode — all roles map to full access)
+ROLE_PLATFORM_ADMIN: str = "WORKSPACE_ADMIN"
+ROLE_ORG_ADMIN: str = "WORKSPACE_ADMIN"
+ROLE_PRIVACY_OFFICER: str = "WORKSPACE_ADMIN"
+ROLE_RESEARCHER: str = "WORKSPACE_ADMIN"
+ROLE_AUDITOR: str = "WORKSPACE_ADMIN"
+
+
+def get_workspace_context() -> Dict[str, Any]:
+    return dict(_WORKSPACE_ACTOR)
+
+
+def is_offline_mode_enabled() -> bool:
+    return os.environ.get("MEDILOCKER_OFFLINE_MODE", "true").strip().lower() not in ("0", "false", "no")
+
+
+def require_org_access(
+    _user: Dict[str, Any],
+    _org_id: str,
+    _allowed_roles: Optional[List[str]] = None,
+) -> None:
+    return None
+
+
+def user_has_org_access(_user: Dict[str, Any], _org_id: str) -> bool:
+    return True
 from .database import get_db, init_db
 from .engine_adapter import STARTER_DIR, compute_file_sha256
 from .pipeline import (
@@ -139,10 +149,8 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _authorised_org_ids(user: Dict[str, Any]) -> Optional[List[str]]:
-    if user.get("platform_role") == ROLE_PLATFORM_ADMIN:
-        return None  # unrestricted
-    return [m["organisation_id"] for m in user.get("memberships", [])]
+def _authorised_org_ids(_user: Dict[str, Any]) -> Optional[List[str]]:
+    return None  # full local workspace access across organisations
 
 
 def _org_filter_clause(org_ids: Optional[List[str]], column: str = "organisation_id") -> tuple[str, list[Any]]:
@@ -155,7 +163,7 @@ def _org_filter_clause(org_ids: Optional[List[str]], column: str = "organisation
 
 
 # ==============================================================================
-# 1. Health & Authentication (SMTP OTP + Google OAuth 2.0)
+# 1. Health, Diagnostics & Operational Report
 # ==============================================================================
 
 
@@ -172,7 +180,7 @@ def get_health() -> Dict[str, Any]:
 
 
 @app.get("/api/system/diagnostics")
-def get_system_diagnostics(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+def get_system_diagnostics(user: Dict[str, Any] = Depends(get_workspace_context)) -> Dict[str, Any]:
     import shutil
     from .database import get_db_path
 
@@ -195,7 +203,7 @@ def get_system_diagnostics(user: Dict[str, Any] = Depends(require_user)) -> Dict
 
 
 @app.get("/api/reports/brief-pdf")
-def download_brief_pdf(user: Dict[str, Any] = Depends(require_user)):
+def download_brief_pdf(user: Dict[str, Any] = Depends(get_workspace_context)):
     from reportlab.lib.pagesizes import A4
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
     from reportlab.lib.styles import getSampleStyleSheet
@@ -224,236 +232,6 @@ def download_brief_pdf(user: Dict[str, Any] = Depends(require_user)):
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=MediLocker_Operational_Report.pdf"},
     )
-
-
-@app.get("/api/auth/config")
-def get_auth_config() -> Dict[str, Any]:
-    smtp = get_smtp_config()
-    google = get_google_config()
-    return {
-        "mode": get_operating_mode(),
-        "judge_mode": is_judge_mode(),
-        "offline_mode": is_offline_mode_enabled(),
-        "smtp_enabled": smtp["configured"],
-        "dev_email_login_enabled": is_dev_email_login_enabled(),
-        "google_enabled": google["configured"],
-        "google_client_id": google["client_id"] if google["configured"] else None,
-        "google_redirect_uri": google["redirect_uri"] if google["configured"] else None,
-    }
-
-
-class RegisterBody(BaseModel):
-    email: str
-    full_name: str
-    organisation_id: Optional[str] = None
-
-
-@app.post("/api/auth/register")
-def register_user(body: RegisterBody, request: Request) -> Dict[str, Any]:
-    email = body.email.strip().lower()
-    if not re.match(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$", email):
-        raise HTTPException(status_code=400, detail="Invalid email address")
-    if not body.full_name.strip():
-        raise HTTPException(status_code=400, detail="Full name is required")
-
-    now = time.time()
-    with get_db() as conn:
-        existing = conn.execute("SELECT id FROM users WHERE lower(email) = ?", (email,)).fetchone()
-        if existing:
-            # Generic response to prevent account enumeration
-            return {
-                "status": "ok",
-                "message": "If this email is eligible, you can now sign in with Email OTP.",
-            }
-        user_id = f"usr-{secrets.token_hex(8)}"
-        conn.execute(
-            "INSERT INTO users (id, email, full_name, status, platform_role, created_at) VALUES (?, ?, ?, 'ACTIVE', 'USER', ?)",
-            (user_id, email, body.full_name.strip(), now),
-        )
-        # Assign default researcher membership on requested org (if exists) or first org
-        org_row = None
-        if body.organisation_id:
-            org_row = conn.execute("SELECT id FROM organisations WHERE id = ?", (body.organisation_id,)).fetchone()
-        if not org_row:
-            org_row = conn.execute("SELECT id FROM organisations ORDER BY joined_at ASC LIMIT 1").fetchone()
-        if org_row:
-            conn.execute(
-                "INSERT INTO memberships (id, user_id, organisation_id, role, created_at) VALUES (?, ?, ?, ?, ?)",
-                (f"mem-{secrets.token_hex(8)}", user_id, org_row["id"], ROLE_RESEARCHER, now),
-            )
-
-    record_audit_event(
-        action="USER_REGISTERED",
-        resource_type="user",
-        resource_id=user_id,
-        outcome="SUCCESS",
-        actor_id=user_id,
-        actor_email=email,
-        details="Registered new account",
-        ip_address=_client_ip(request),
-    )
-    return {
-        "status": "ok",
-        "message": "If this email is eligible, you can now sign in with Email OTP.",
-    }
-
-
-class OtpRequestBody(BaseModel):
-    email: str
-    purpose: str = "login"
-
-
-@app.post("/api/auth/otp/request")
-def auth_otp_request(body: OtpRequestBody, request: Request) -> Dict[str, Any]:
-    return request_email_otp(body.email, body.purpose, _client_ip(request))
-
-
-class OtpVerifyBody(BaseModel):
-    email: str
-    code: str
-    purpose: str = "login"
-
-
-class DevLoginBody(BaseModel):
-    email: str
-
-
-class OfflineDemoBody(BaseModel):
-    email: Optional[str] = None
-
-
-@app.post("/api/auth/offline-demo")
-def auth_offline_demo(
-    request: Request,
-    response: Response,
-    body: Optional[OfflineDemoBody] = None,
-) -> Dict[str, Any]:
-    raw_token, ctx = offline_demo_login(
-        body.email if body else None,
-        _client_ip(request),
-        request.headers.get("user-agent"),
-    )
-    set_session_cookie(response, raw_token)
-    return {"user": ctx, "token": raw_token}
-
-
-@app.post("/api/auth/dev-login")
-def auth_dev_login(body: DevLoginBody, request: Request, response: Response) -> Dict[str, Any]:
-    raw_token, ctx = dev_email_login(
-        body.email,
-        _client_ip(request),
-        request.headers.get("user-agent"),
-    )
-    set_session_cookie(response, raw_token)
-    return {"user": ctx, "token": raw_token}
-
-
-@app.post("/api/auth/otp/verify")
-def auth_otp_verify(body: OtpVerifyBody, request: Request, response: Response) -> Dict[str, Any]:
-    raw_token, ctx = verify_email_otp(
-        body.email,
-        body.code,
-        body.purpose,
-        _client_ip(request),
-        request.headers.get("user-agent"),
-    )
-    set_session_cookie(response, raw_token)
-    return {"user": ctx, "token": raw_token}
-
-
-@app.get("/api/auth/google/login")
-def auth_google_login(
-    link_account: bool = False,
-    request: Request = None,  # type: ignore
-) -> Dict[str, str]:
-    link_user_id = None
-    if link_account:
-        from .auth import get_current_user_optional
-
-        # Require existing authenticated session to link Google account
-        raise HTTPException(status_code=400, detail="Use /api/auth/google/link while authenticated")
-    return create_google_auth_url(link_user_id=link_user_id)
-
-
-@app.post("/api/auth/google/link")
-def auth_google_link(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, str]:
-    return create_google_auth_url(link_user_id=user["id"])
-
-
-class GoogleCallbackBody(BaseModel):
-    code: str
-    state: str
-
-
-@app.post("/api/auth/google/callback")
-def auth_google_callback_post(
-    body: GoogleCallbackBody, request: Request, response: Response
-) -> Dict[str, Any]:
-    raw_token, ctx = handle_google_callback(
-        body.code,
-        body.state,
-        _client_ip(request),
-        request.headers.get("user-agent"),
-    )
-    set_session_cookie(response, raw_token)
-    return {"user": ctx, "token": raw_token}
-
-
-@app.get("/api/auth/google/callback")
-def auth_google_callback_get(
-    code: str, state: str, request: Request, response: Response
-) -> Dict[str, Any]:
-    raw_token, ctx = handle_google_callback(
-        code,
-        state,
-        _client_ip(request),
-        request.headers.get("user-agent"),
-    )
-    set_session_cookie(response, raw_token)
-    return {"user": ctx, "token": raw_token}
-
-
-@app.get("/api/auth/me")
-def auth_me(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
-    safe_user = {k: v for k, v in user.items() if k != "raw_token"}
-    return {"user": safe_user}
-
-
-class SwitchOrgBody(BaseModel):
-    organisation_id: str
-
-
-@app.post("/api/auth/switch-org")
-def auth_switch_org(body: SwitchOrgBody, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
-    require_org_access(user, body.organisation_id)
-    with get_db() as conn:
-        conn.execute(
-            "UPDATE sessions SET active_org_id = ? WHERE id = ?",
-            (body.organisation_id, user["session_id"]),
-        )
-    return {"status": "ok", "active_org_id": body.organisation_id}
-
-
-@app.post("/api/auth/logout")
-def auth_logout(
-    request: Request, response: Response, user: Dict[str, Any] = Depends(require_user)
-) -> Dict[str, str]:
-    raw_token = user.get("raw_token")
-    if raw_token:
-        revoke_session_by_token(raw_token)
-    clear_session_cookie(response)
-    record_audit_event(
-        action="LOGOUT",
-        resource_type="session",
-        resource_id=user.get("session_id"),
-        outcome="SUCCESS",
-        actor_id=user["id"],
-        actor_email=user["email"],
-        actor_role=user.get("active_role"),
-        organisation_id=user.get("active_org_id"),
-        ip_address=_client_ip(request),
-    )
-    return {"status": "ok"}
 
 
 # ==============================================================================
@@ -659,22 +437,22 @@ def _compute_dashboard_payload(user: Dict[str, Any]) -> Dict[str, Any]:
 
 @app.get("/api/dashboard")
 @app.get("/api/dashboard/overview")
-def get_dashboard_overview(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+def get_dashboard_overview(user: Dict[str, Any] = Depends(get_workspace_context)) -> Dict[str, Any]:
     return _compute_dashboard_payload(user)
 
 
 @app.get("/api/dashboard/metrics")
-def get_dashboard_metrics(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+def get_dashboard_metrics(user: Dict[str, Any] = Depends(get_workspace_context)) -> Dict[str, Any]:
     return _compute_dashboard_payload(user)["metrics"]
 
 
 @app.get("/api/dashboard/recent-jobs")
-def get_dashboard_recent_jobs(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+def get_dashboard_recent_jobs(user: Dict[str, Any] = Depends(get_workspace_context)) -> List[Dict[str, Any]]:
     return _compute_dashboard_payload(user)["recent_jobs"]
 
 
 @app.get("/api/dashboard/audit-events")
-def get_dashboard_audit_events(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+def get_dashboard_audit_events(user: Dict[str, Any] = Depends(get_workspace_context)) -> List[Dict[str, Any]]:
     return _compute_dashboard_payload(user)["audit_events"]
 
 
@@ -687,7 +465,7 @@ def get_system_compliance() -> Dict[str, Any]:
 @app.get("/api/dashboard/metrics-summary")
 def get_dashboard_metrics_summary_endpoint(
     scope: str = Query(default="latest"),
-    user: Dict[str, Any] = Depends(require_user),
+    user: Dict[str, Any] = Depends(get_workspace_context),
 ) -> Dict[str, Any]:
     org_ids = _authorised_org_ids(user)
     with get_db() as conn:
@@ -702,7 +480,7 @@ def get_dashboard_metrics_summary_endpoint(
 @app.get("/api/jobs/{job_id}/dashboard-metrics")
 def get_job_dashboard_metrics_endpoint(
     job_id: str,
-    user: Dict[str, Any] = Depends(require_user),
+    user: Dict[str, Any] = Depends(get_workspace_context),
 ) -> Dict[str, Any]:
     org_ids = _authorised_org_ids(user)
     with get_db() as conn:
@@ -720,7 +498,7 @@ def get_job_dashboard_metrics_endpoint(
 
 
 @app.get("/api/organisations")
-def list_organisations(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+def list_organisations(user: Dict[str, Any] = Depends(get_workspace_context)) -> List[Dict[str, Any]]:
     org_ids = _authorised_org_ids(user)
     where_org, params = _org_filter_clause(org_ids, "id")
     with get_db() as conn:
@@ -740,7 +518,7 @@ class CreateOrgBody(BaseModel):
 def create_organisation(
     body: CreateOrgBody,
     request: Request,
-    user: Dict[str, Any] = Depends(require_roles([ROLE_PLATFORM_ADMIN])),
+    user: Dict[str, Any] = Depends(get_workspace_context),
 ) -> Dict[str, Any]:
     org_id = f"org-{secrets.token_hex(6)}"
     now = time.time()
@@ -765,7 +543,7 @@ def create_organisation(
 
 
 @app.get("/api/organisations/{org_id}")
-def get_organisation(org_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+def get_organisation(org_id: str, user: Dict[str, Any] = Depends(get_workspace_context)) -> Dict[str, Any]:
     require_org_access(user, org_id)
     with get_db() as conn:
         row = conn.execute("SELECT * FROM organisations WHERE id = ?", (org_id,)).fetchone()
@@ -784,20 +562,17 @@ def get_organisation(org_id: str, user: Dict[str, Any] = Depends(require_user)) 
 
 
 @app.get("/api/organisations/{org_id}/members")
-def get_organisation_members(org_id: str, user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+def get_organisation_members(org_id: str, user: Dict[str, Any] = Depends(get_workspace_context)) -> List[Dict[str, Any]]:
     require_org_access(user, org_id)
-    with get_db() as conn:
-        rows = conn.execute(
-            """
-            SELECT m.id, m.user_id, m.role, m.created_at, u.email, u.full_name, u.status
-            FROM memberships m
-            JOIN users u ON u.id = m.user_id
-            WHERE m.organisation_id = ?
-            ORDER BY m.created_at ASC
-            """,
-            (org_id,),
-        ).fetchall()
-    return [dict(r) for r in rows]
+    return [{
+        "id": "local-workspace",
+        "user_id": "local-workspace",
+        "role": "WORKSPACE_ADMIN",
+        "created_at": 0.0,
+        "email": "workspace@medilocker.local",
+        "full_name": "Local Workspace",
+        "status": "ACTIVE",
+    }]
 
 
 # ==============================================================================
@@ -806,7 +581,7 @@ def get_organisation_members(org_id: str, user: Dict[str, Any] = Depends(require
 
 
 @app.get("/api/datasets")
-def list_datasets(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+def list_datasets(user: Dict[str, Any] = Depends(get_workspace_context)) -> List[Dict[str, Any]]:
     org_ids = _authorised_org_ids(user)
     where_org, params = _org_filter_clause(org_ids, "d.organisation_id")
     with get_db() as conn:
@@ -836,13 +611,9 @@ async def upload_dataset(
     auto_process: bool = Form(True),
     sync: bool = Form(False),
     files: List[UploadFile] = File(...),
-    user: Dict[str, Any] = Depends(require_user),
+    user: Dict[str, Any] = Depends(get_workspace_context),
 ) -> Dict[str, Any]:
-    target_org = (
-        user.get("active_org_id")
-        if (is_judge_mode() and user.get("judge_mode"))
-        else (organisation_id or user.get("active_org_id"))
-    )
+    target_org = organisation_id or user.get("active_org_id")
     if not target_org:
         raise HTTPException(status_code=400, detail="No organisation specified")
     require_org_access(user, target_org, [ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER])
@@ -940,7 +711,7 @@ async def upload_dataset(
 
 
 @app.get("/api/datasets/{dataset_id}")
-def get_dataset(dataset_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+def get_dataset(dataset_id: str, user: Dict[str, Any] = Depends(get_workspace_context)) -> Dict[str, Any]:
     with get_db() as conn:
         row = conn.execute(
             "SELECT * FROM datasets WHERE id = ? AND deleted_at IS NULL", (dataset_id,)
@@ -961,7 +732,7 @@ def get_dataset(dataset_id: str, user: Dict[str, Any] = Depends(require_user)) -
 
 @app.delete("/api/datasets/{dataset_id}")
 def delete_dataset(
-    dataset_id: str, request: Request, user: Dict[str, Any] = Depends(require_user)
+    dataset_id: str, request: Request, user: Dict[str, Any] = Depends(get_workspace_context)
 ) -> Dict[str, str]:
     with get_db() as conn:
         row = conn.execute(
@@ -1062,7 +833,7 @@ class CreateJobBody(BaseModel):
 @app.post("/api/jobs")
 async def create_job(
     request: Request,
-    user: Dict[str, Any] = Depends(require_user),
+    user: Dict[str, Any] = Depends(get_workspace_context),
     dataset_id: Optional[str] = Form(None),
     organisation_id: Optional[str] = Form(None),
     sync: bool = Form(False),
@@ -1131,7 +902,7 @@ async def create_job(
 
 
 @app.get("/api/jobs")
-def list_jobs(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+def list_jobs(user: Dict[str, Any] = Depends(get_workspace_context)) -> List[Dict[str, Any]]:
     org_ids = _authorised_org_ids(user)
     where_org, params = _org_filter_clause(org_ids, "j.organisation_id")
     with get_db() as conn:
@@ -1150,7 +921,7 @@ def list_jobs(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, An
 
 
 @app.get("/api/jobs/{job_id}")
-def get_job_detail(job_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+def get_job_detail(job_id: str, user: Dict[str, Any] = Depends(get_workspace_context)) -> Dict[str, Any]:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         if not row:
@@ -1169,13 +940,13 @@ def get_job_detail(job_id: str, user: Dict[str, Any] = Depends(require_user)) ->
 
 
 @app.get("/api/jobs/{job_id}/events")
-def get_job_events(job_id: str, user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+def get_job_events(job_id: str, user: Dict[str, Any] = Depends(get_workspace_context)) -> List[Dict[str, Any]]:
     job = get_job_detail(job_id, user)
     return job["events"]
 
 
 @app.get("/api/jobs/{job_id}/results")
-def get_job_results(job_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+def get_job_results(job_id: str, user: Dict[str, Any] = Depends(get_workspace_context)) -> Dict[str, Any]:
     job = get_job_detail(job_id, user)
     with get_db() as conn:
         privacy = conn.execute("SELECT * FROM privacy_assessments WHERE job_id = ?", (job_id,)).fetchone()
@@ -1196,20 +967,14 @@ def download_job_outputs(
     job_id: str,
     request: Request,
     include_mapping: bool = False,
-    user: Dict[str, Any] = Depends(require_user),
+    user: Dict[str, Any] = Depends(get_workspace_context),
 ):
     job = get_job_detail(job_id, user)
     if job.get("organisation_id"):
         if include_mapping:
-            if is_judge_mode():
-                raise HTTPException(
-                    status_code=403,
-                    detail="Restricted patient mapping file download is disabled in Local Evaluation Mode.",
-                )
-            require_org_access(
-                user,
-                job["organisation_id"],
-                [ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER],
+            raise HTTPException(
+                status_code=403,
+                detail="Restricted patient mapping file download is disabled in local workspace mode.",
             )
         else:
             require_org_access(user, job["organisation_id"])
@@ -1259,7 +1024,7 @@ def download_job_outputs(
 
 @app.get("/api/jobs/{job_id}/report.json")
 def download_job_report_json(
-    job_id: str, request: Request, user: Dict[str, Any] = Depends(require_user)
+    job_id: str, request: Request, user: Dict[str, Any] = Depends(get_workspace_context)
 ):
     job = get_job_detail(job_id, user)
     if job.get("organisation_id"):
@@ -1276,21 +1041,13 @@ def download_job_report_json(
 
 @app.get("/api/jobs/{job_id}/mapping")
 def download_job_mapping_jsonl(
-    job_id: str, request: Request, user: Dict[str, Any] = Depends(require_user)
+    job_id: str, request: Request, user: Dict[str, Any] = Depends(get_workspace_context)
 ):
     """Restricted download of sensitive records.jsonl patient mapping file."""
-    if is_judge_mode():
-        raise HTTPException(
-            status_code=403,
-            detail="Restricted patient mapping file download is disabled in Local Evaluation Mode.",
-        )
-    job = get_job_detail(job_id, user)
-    if job.get("organisation_id"):
-        require_org_access(
-            user,
-            job["organisation_id"],
-            [ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER],
-        )
+    raise HTTPException(
+        status_code=403,
+        detail="Restricted patient mapping file download is disabled in local workspace mode.",
+    )
     if job.get("release_decision") not in ("APPROVED", "APPROVED_WITH_WARNINGS") or job.get("status") not in ("COMPLETED", "COMPLETED_WITH_WARNINGS"):
         raise HTTPException(
             status_code=403,
@@ -1321,7 +1078,7 @@ def download_job_mapping_jsonl(
 
 @app.get("/api/jobs/{job_id}/privacy-report.pdf")
 def download_job_privacy_report_pdf(
-    job_id: str, request: Request, user: Dict[str, Any] = Depends(require_user)
+    job_id: str, request: Request, user: Dict[str, Any] = Depends(get_workspace_context)
 ):
     from .privacy_report_pdf import generate_privacy_integrity_pdf
 
@@ -1444,7 +1201,7 @@ def download_job_privacy_report_pdf(
 
 
 @app.get("/api/privacy/assessments")
-def list_privacy_assessments(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+def list_privacy_assessments(user: Dict[str, Any] = Depends(get_workspace_context)) -> List[Dict[str, Any]]:
     org_ids = _authorised_org_ids(user)
     where_org, params = _org_filter_clause(org_ids, "organisation_id")
     with get_db() as conn:
@@ -1455,7 +1212,7 @@ def list_privacy_assessments(user: Dict[str, Any] = Depends(require_user)) -> Li
 
 
 @app.get("/api/privacy/assessments/{assessment_id}")
-def get_privacy_assessment(assessment_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+def get_privacy_assessment(assessment_id: str, user: Dict[str, Any] = Depends(get_workspace_context)) -> Dict[str, Any]:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM privacy_assessments WHERE id = ?", (assessment_id,)).fetchone()
         if not row:
@@ -1469,7 +1226,7 @@ def get_privacy_assessment(assessment_id: str, user: Dict[str, Any] = Depends(re
 def download_privacy_assessment_pdf(
     assessment_id: str,
     format: str = Query("pdf", pattern="^pdf$"),
-    user: Dict[str, Any] = Depends(require_user),
+    user: Dict[str, Any] = Depends(get_workspace_context),
 ):
     _ = get_privacy_assessment(assessment_id, user)
     try:
@@ -1620,7 +1377,7 @@ def _build_attack_overview(attack_row: Optional[Dict[str, Any]]) -> Dict[str, An
 @app.get("/api/privacy-intelligence")
 def get_privacy_intelligence(
     job_id: Optional[str] = Query(default=None),
-    user: Dict[str, Any] = Depends(require_user),
+    user: Dict[str, Any] = Depends(get_workspace_context),
 ) -> Dict[str, Any]:
     org_ids = _authorised_org_ids(user)
     where_org, params = _org_filter_clause(org_ids, "j.organisation_id")
@@ -1784,6 +1541,47 @@ def get_privacy_intelligence(
         or (selected_job or {}).get("created_at")
     )
 
+    # Read-only enrichment from selected job's report.json (if present on disk):
+    # exposes aggregate field_tier_counts and document-wise format breakdown (never raw filenames/PII).
+    field_tier_counts: Dict[str, int] = {}
+    files_by_format: List[Dict[str, Any]] = []
+    if selected_job_id:
+        report_file = JOBS_DIR / selected_job_id / "output" / "report.json"
+        if report_file.is_file():
+            try:
+                rpt = json.loads(report_file.read_text(encoding="utf-8"))
+                ftc = (rpt.get("privacy_intelligence") or {}).get("field_tier_counts") or {}
+                if isinstance(ftc, dict):
+                    field_tier_counts = {str(k): int(v) for k, v in ftc.items() if isinstance(v, (int, float))}
+                fmt_agg: Dict[str, Dict[str, int]] = {}
+                for fitem in (rpt.get("files") or []):
+                    if not isinstance(fitem, dict):
+                        continue
+                    ext_raw = str(fitem.get("file_type") or fitem.get("format") or Path(str(fitem.get("file") or "")).suffix or "").upper().lstrip(".")
+                    if "FHIR" in ext_raw:
+                        fmt_key = "FHIR"
+                    elif ext_raw in ("CSV", "TSV"):
+                        fmt_key = "CSV"
+                    elif ext_raw in ("JSON", "JSONL"):
+                        fmt_key = "JSON"
+                    elif ext_raw in ("TXT", "TEXT", "MD"):
+                        fmt_key = "TXT"
+                    else:
+                        fmt_key = ext_raw or "OTHER"
+                    bucket = fmt_agg.setdefault(fmt_key, {"total": 0, "sanitized": 0, "quarantined": 0, "records": 0})
+                    bucket["total"] += 1
+                    st_str = str(fitem.get("status") or "").lower()
+                    if "quarantin" in st_str or st_str in ("failed", "blocked", "skipped"):
+                        bucket["quarantined"] += 1
+                    else:
+                        bucket["sanitized"] += 1
+                    bucket["records"] += int(fitem.get("records") or fitem.get("records_processed") or 0)
+                files_by_format = [
+                    {"format": k, **v} for k, v in sorted(fmt_agg.items())
+                ]
+            except Exception:
+                pass
+
     return {
         "status": "MEASURED" if selected_assessment else "NOT_MEASURED",
         "assessments_count": len(assessments),
@@ -1792,6 +1590,8 @@ def get_privacy_intelligence(
         "canary_status": canary_st,
         "reid_risk_level": reid_lvl,
         "risk_map": risk_map,
+        "field_tier_counts": field_tier_counts,
+        "files_by_format": files_by_format,
         "assessments": assessments,
         "jobs": job_rows,
         "selected_job_id": selected_job_id,
@@ -1812,7 +1612,7 @@ def get_privacy_intelligence(
 @app.get("/api/quarantine")
 def list_quarantined_files(
     job_id: Optional[str] = Query(default=None),
-    user: Dict[str, Any] = Depends(require_user),
+    user: Dict[str, Any] = Depends(get_workspace_context),
 ) -> Dict[str, Any]:
     """Return safe, PII-free metadata for quarantined files across authorised organisations."""
     org_ids = _authorised_org_ids(user)
@@ -1891,7 +1691,7 @@ def list_quarantined_files(
 @app.get("/api/identity/clusters")
 @app.get("/api/identity-graph")
 def list_identity_clusters(
-    job_id: Optional[str] = None, user: Dict[str, Any] = Depends(require_user)
+    job_id: Optional[str] = None, user: Dict[str, Any] = Depends(get_workspace_context)
 ) -> Dict[str, Any]:
     org_ids = _authorised_org_ids(user)
     where_org, params = _org_filter_clause(org_ids, "organisation_id")
@@ -1943,7 +1743,7 @@ def list_identity_clusters(
 
 
 @app.get("/api/clinical/reports")
-def list_clinical_reports(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+def list_clinical_reports(user: Dict[str, Any] = Depends(get_workspace_context)) -> List[Dict[str, Any]]:
     org_ids = _authorised_org_ids(user)
     where_org, params = _org_filter_clause(org_ids, "organisation_id")
     with get_db() as conn:
@@ -1954,7 +1754,7 @@ def list_clinical_reports(user: Dict[str, Any] = Depends(require_user)) -> List[
 
 
 @app.get("/api/clinical/reports/{report_id}")
-def get_clinical_report(report_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+def get_clinical_report(report_id: str, user: Dict[str, Any] = Depends(get_workspace_context)) -> Dict[str, Any]:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM clinical_reports WHERE id = ?", (report_id,)).fetchone()
         if not row:
@@ -1968,7 +1768,7 @@ def get_clinical_report(report_id: str, user: Dict[str, Any] = Depends(require_u
 def download_clinical_report_pdf(
     report_id: str,
     format: str = Query("pdf", pattern="^pdf$"),
-    user: Dict[str, Any] = Depends(require_user),
+    user: Dict[str, Any] = Depends(get_workspace_context),
 ):
     _ = get_clinical_report(report_id, user)
     try:
@@ -1985,7 +1785,7 @@ def download_clinical_report_pdf(
 
 
 @app.get("/api/threat-lab")
-def get_threat_lab(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+def get_threat_lab(user: Dict[str, Any] = Depends(get_workspace_context)) -> Dict[str, Any]:
     org_ids = _authorised_org_ids(user)
     where_org, params = _org_filter_clause(org_ids, "organisation_id")
     with get_db() as conn:
@@ -2019,7 +1819,7 @@ class AttackRunBody(BaseModel):
 
 @app.post("/api/attack-simulator/run")
 def run_attack_simulator(
-    body: AttackRunBody, request: Request, user: Dict[str, Any] = Depends(require_user)
+    body: AttackRunBody, request: Request, user: Dict[str, Any] = Depends(get_workspace_context)
 ) -> Dict[str, Any]:
     job = get_job_detail(body.job_id, user)
     if job.get("organisation_id"):
@@ -2050,7 +1850,7 @@ def run_attack_simulator(
 def download_attack_simulation_pdf(
     run_id: str,
     format: str = Query("pdf", pattern="^pdf$"),
-    user: Dict[str, Any] = Depends(require_user),
+    user: Dict[str, Any] = Depends(get_workspace_context),
 ):
     with get_db() as conn:
         row = conn.execute("SELECT * FROM attack_runs WHERE id = ?", (run_id,)).fetchone()
@@ -2072,7 +1872,7 @@ def download_attack_simulation_pdf(
 
 
 @app.get("/api/passports")
-def list_passports(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+def list_passports(user: Dict[str, Any] = Depends(get_workspace_context)) -> List[Dict[str, Any]]:
     org_ids = _authorised_org_ids(user)
     where_org, params = _org_filter_clause(org_ids, "p.organisation_id")
     with get_db() as conn:
@@ -2091,7 +1891,7 @@ def list_passports(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[st
 
 
 @app.get("/api/passports/{passport_id}")
-def get_passport(passport_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+def get_passport(passport_id: str, user: Dict[str, Any] = Depends(get_workspace_context)) -> Dict[str, Any]:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM passports WHERE id = ?", (passport_id,)).fetchone()
         if not row:
@@ -2105,7 +1905,7 @@ def get_passport(passport_id: str, user: Dict[str, Any] = Depends(require_user))
 
 @app.post("/api/passports/{passport_id}/verify")
 def verify_passport(
-    passport_id: str, request: Request, user: Dict[str, Any] = Depends(require_user)
+    passport_id: str, request: Request, user: Dict[str, Any] = Depends(get_workspace_context)
 ) -> Dict[str, Any]:
     data = get_passport(passport_id, user)
     job_id = data.get("job_id")
@@ -2170,7 +1970,7 @@ def verify_passport(
 def download_passport(
     passport_id: str,
     format: str = Query("json", pattern="^(json|html|pdf)$"),
-    user: Dict[str, Any] = Depends(require_user),
+    user: Dict[str, Any] = Depends(get_workspace_context),
 ):
     data = get_passport(passport_id, user)
     if format == "pdf":
@@ -2225,7 +2025,7 @@ def download_passport(
 
 
 @app.get("/api/research/requests")
-def list_research_requests(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
+def list_research_requests(user: Dict[str, Any] = Depends(get_workspace_context)) -> List[Dict[str, Any]]:
     with get_db() as conn:
         rows = [
             dict(r)
@@ -2245,9 +2045,7 @@ class NewResearchBody(BaseModel):
 def create_research_request(
     body: NewResearchBody,
     request: Request,
-    user: Dict[str, Any] = Depends(
-        require_roles([ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER, ROLE_RESEARCHER])
-    ),
+    user: Dict[str, Any] = Depends(get_workspace_context),
 ) -> Dict[str, Any]:
     req_id = f"req-{int(time.time())}-{secrets.token_hex(3)}"
     now = time.time()
@@ -2291,7 +2089,7 @@ def create_research_request(
 def approve_research_request(
     req_id: str,
     request: Request,
-    user: Dict[str, Any] = Depends(require_roles([ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER])),
+    user: Dict[str, Any] = Depends(get_workspace_context),
 ) -> Dict[str, str]:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM research_requests WHERE id = ?", (req_id,)).fetchone()
@@ -2319,7 +2117,7 @@ def approve_research_request(
 def reject_research_request(
     req_id: str,
     request: Request,
-    user: Dict[str, Any] = Depends(require_roles([ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER])),
+    user: Dict[str, Any] = Depends(get_workspace_context),
 ) -> Dict[str, str]:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM research_requests WHERE id = ?", (req_id,)).fetchone()
@@ -2349,7 +2147,7 @@ def list_audit_events(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
     action: Optional[str] = None,
-    user: Dict[str, Any] = Depends(require_user),
+    user: Dict[str, Any] = Depends(get_workspace_context),
 ) -> Dict[str, Any]:
     org_ids = _authorised_org_ids(user)
     where_org, params = _org_filter_clause(org_ids, "organisation_id")
@@ -2379,7 +2177,7 @@ def export_audit_trail_pdf(
     organisation_id: Optional[str] = None,
     start_ts: Optional[float] = None,
     end_ts: Optional[float] = None,
-    user: Dict[str, Any] = Depends(require_user),
+    user: Dict[str, Any] = Depends(get_workspace_context),
 ):
     target_org = organisation_id or user.get("active_org_id")
     if target_org:
@@ -2409,18 +2207,14 @@ def export_audit_trail_pdf(
 
 
 @app.get("/api/settings")
-def get_settings(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
-    smtp = get_smtp_config()
-    google = get_google_config()
+def get_settings(user: Dict[str, Any] = Depends(get_workspace_context)) -> Dict[str, Any]:
     with get_db() as conn:
         saved = {
             r["key"]: r["value"]
             for r in conn.execute("SELECT key, value FROM settings").fetchall()
         }
     return {
-        "user": {k: v for k, v in user.items() if k != "raw_token"},
-        "smtp_configured": smtp["configured"],
-        "google_configured": google["configured"],
+        "workspace": {k: v for k, v in user.items() if k != "raw_token"},
         "raksha_secret_set": bool(os.environ.get("RAKSHA_SECRET")),
         "output_format": saved.get("output_format", "sanitized+report+records"),
         "quarantine_threshold": float(saved.get("quarantine_threshold", "0.5")),
@@ -2438,7 +2232,7 @@ class SettingsUpdateBody(BaseModel):
 def update_settings(
     body: SettingsUpdateBody,
     request: Request,
-    user: Dict[str, Any] = Depends(require_roles([ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER])),
+    user: Dict[str, Any] = Depends(get_workspace_context),
 ) -> Dict[str, Any]:
     with get_db() as conn:
         if body.output_format is not None:

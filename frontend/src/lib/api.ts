@@ -140,34 +140,12 @@ export interface DashboardOverview {
   freshness: number;
 }
 
-export interface AuthMembership {
-  id: string;
-  organisation_id: string;
-  organisation_name: string;
-  org_type: string;
-  role: string;
-}
-
-export interface AuthUser {
+export interface WorkspaceContext {
   id: string;
   email: string;
   full_name: string;
   platform_role: string;
   active_org_id: string | null;
-  active_role: string | null;
-  memberships: AuthMembership[];
-  oauth_providers: { provider: string; email: string; email_verified: number }[];
-}
-
-export interface AuthConfig {
-  mode?: "judge" | "organisation";
-  judge_mode?: boolean;
-  offline_mode?: boolean;
-  smtp_enabled: boolean;
-  dev_email_login_enabled?: boolean;
-  google_enabled: boolean;
-  google_client_id: string | null;
-  google_redirect_uri: string | null;
 }
 
 export interface Organisation {
@@ -241,6 +219,14 @@ export interface ClinicalDriftCategory {
   status: "PRESERVED" | "DRIFT_DETECTED" | "NOT_MEASURED";
 }
 
+export interface FileFormatBreakdown {
+  format: string;
+  total: number;
+  sanitized: number;
+  quarantined: number;
+  records: number;
+}
+
 export interface PrivacyIntelligence {
   status: "MEASURED" | "NOT_MEASURED";
   assessments_count: number;
@@ -249,6 +235,8 @@ export interface PrivacyIntelligence {
   canary_status: string;
   reid_risk_level: string;
   risk_map?: PrivacyRiskMap | null;
+  field_tier_counts?: Record<string, number>;
+  files_by_format?: FileFormatBreakdown[];
   assessments: PrivacyAssessment[];
   jobs?: {
     id: string;
@@ -530,9 +518,7 @@ export interface ResearchRequest {
 }
 
 export interface SettingsData {
-  user: AuthUser;
-  smtp_configured: boolean;
-  google_configured: boolean;
+  workspace: WorkspaceContext;
   raksha_secret_set: boolean;
   output_format: string;
   quarantine_threshold: number;
@@ -540,47 +526,6 @@ export interface SettingsData {
 }
 
 export const api = {
-  // Auth
-  authConfig: () => request<AuthConfig>("/api/auth/config"),
-  register: (email: string, full_name: string, organisation_id?: string) =>
-    request<{ status: string; message: string }>("/api/auth/register", {
-      method: "POST",
-      body: JSON.stringify({ email, full_name, organisation_id }),
-    }),
-  requestOtp: (email: string) =>
-    request<{ status: string; message: string }>("/api/auth/otp/request", {
-      method: "POST",
-      body: JSON.stringify({ email, purpose: "login" }),
-    }),
-  verifyOtp: (email: string, code: string) =>
-    request<{ user: AuthUser; token: string }>("/api/auth/otp/verify", {
-      method: "POST",
-      body: JSON.stringify({ email, code, purpose: "login" }),
-    }),
-  devEmailLogin: (email: string) =>
-    request<{ user: AuthUser; token: string }>("/api/auth/dev-login", {
-      method: "POST",
-      body: JSON.stringify({ email }),
-    }),
-  offlineDemoLogin: (email?: string) =>
-    request<{ user: AuthUser; token: string }>("/api/auth/offline-demo", {
-      method: "POST",
-      body: JSON.stringify(email ? { email } : {}),
-    }),
-  googleLoginUrl: () => request<{ auth_url: string; state: string }>("/api/auth/google/login"),
-  googleCallback: (code: string, state: string) =>
-    request<{ user: AuthUser; token: string }>("/api/auth/google/callback", {
-      method: "POST",
-      body: JSON.stringify({ code, state }),
-    }),
-  me: () => request<{ user: AuthUser }>("/api/auth/me"),
-  switchOrg: (organisation_id: string) =>
-    request<{ status: string; active_org_id: string }>("/api/auth/switch-org", {
-      method: "POST",
-      body: JSON.stringify({ organisation_id }),
-    }),
-  logout: () => request<{ status: string }>("/api/auth/logout", { method: "POST" }),
-
   // Dashboard & System Compliance
   dashboard: () => request<DashboardOverview>("/api/dashboard/overview"),
   dashboardMetricsSummary: (scope = "latest") =>

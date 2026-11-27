@@ -56,7 +56,7 @@ export default function SettingsPage() {
       <PageHeader
         eyebrow="12 · CONFIGURATION"
         title="Settings"
-        subtitle="Account identity, authentication integrations, and privacy engine policy thresholds."
+        subtitle="Workspace status and privacy engine policy thresholds."
       />
 
       {error && <ErrorState message={error} />}
@@ -74,23 +74,16 @@ export default function SettingsPage() {
         <div className="space-y-6">
           <div className="bg-white border border-[#DADADA] rounded-2xl p-6">
             <h2 className="text-[15px] font-semibold text-[#090909] mb-4">
-              Account & Authentication Status
+              Workspace & Engine Status
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[13px] text-[#666666]">
               <div>
-                <span className="text-[#090909] font-medium">Email:</span> {settings.user.email}
+                <span className="text-[#090909] font-medium">Workspace:</span>{" "}
+                {settings.workspace.full_name}
               </div>
               <div>
-                <span className="text-[#090909] font-medium">Active Role:</span>{" "}
-                {settings.user.active_role || settings.user.platform_role}
-              </div>
-              <div>
-                <span className="text-[#090909] font-medium">SMTP Email OTP:</span>{" "}
-                {settings.smtp_configured ? "Configured" : "Not Configured"}
-              </div>
-              <div>
-                <span className="text-[#090909] font-medium">Google OAuth 2.0:</span>{" "}
-                {settings.google_configured ? "Configured" : "Not Configured"}
+                <span className="text-[#090909] font-medium">Default Organisation:</span>{" "}
+                {settings.workspace.active_org_id || "org-hosp-a"}
               </div>
               <div>
                 <span className="text-[#090909] font-medium">RAKSHA_SECRET:</span>{" "}

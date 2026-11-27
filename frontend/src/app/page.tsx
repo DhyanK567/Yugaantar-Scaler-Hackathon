@@ -104,7 +104,7 @@ export default function HomePage() {
             Ready to protect your patients?
           </h2>
           <Link
-            href="/register"
+            href="/dashboard"
             className="inline-flex items-center justify-center px-6 py-3 rounded-full bg-white text-[#090909] text-[13.5px] font-semibold hover:bg-[#E6E6E6] transition-colors shrink-0"
           >
             Start for free
