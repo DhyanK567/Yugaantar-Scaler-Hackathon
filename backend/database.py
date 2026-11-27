@@ -19,7 +19,9 @@ def get_db_path() -> Path:
     if override:
         p = Path(override)
     else:
-        data_dir = os.environ.get("MEDILOCKER_DATA_DIR")
+        data_dir = os.environ.get("MEDILOCKER_DATA_DIR") or (
+            "/tmp/medilocker_data" if os.environ.get("VERCEL") else None
+        )
         p = (Path(data_dir) / "guptkavach.db") if data_dir else DEFAULT_DB_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
     return p

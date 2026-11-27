@@ -9,8 +9,6 @@ desktop/
 tests/
 dev/
 test_output/
-starter/
-backend/
 launcher/
 docs/
 scripts/
