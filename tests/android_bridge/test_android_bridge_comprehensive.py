@@ -91,8 +91,8 @@ def test_unauthenticated_rejected_and_diagnostics_ok(android_env):
     assert st == 200
     diag = json.loads(body)
     assert diag["offline_mode"] is True
-    assert diag["cpu_only"] is True
-    assert diag["engine_loaded"] is True
+    assert diag["api_status"] == "healthy"
+    assert diag["engine_status"] == "ready"
 
 
 def test_upload_validation_rejects_empty_and_unsupported(android_env):
@@ -181,8 +181,20 @@ def test_multiformat_hindi_filename_quarantine_and_zip_security(android_env):
         "/api/passports",
         "/api/audit/events",
     ):
-        st, _, _ = _call("GET", ep, {"Cookie": cookie})
+        st, _, ep_body = _call("GET", ep, {"Cookie": cookie})
         assert st == 200, f"GET {ep} returned {st}"
+        if ep == "/api/identity/clusters":
+            ig = json.loads(ep_body)
+            assert isinstance(ig["nodes"], list)
+            assert isinstance(ig["edges"], list)
+            assert ig["precision"] is None or isinstance(ig["precision"], (int, float))
+        elif ep == "/api/threat-lab":
+            tl = json.loads(ep_body)
+            assert isinstance(tl["attack_simulations"], list)
+            assert isinstance(tl["history"], list)
+        elif ep == "/api/audit/events":
+            ae = json.loads(ep_body)
+            assert isinstance(ae["events"], list)
 
     # Verify & download passport
     st, _, pbytes = _call("GET", "/api/passports", {"Cookie": cookie})
