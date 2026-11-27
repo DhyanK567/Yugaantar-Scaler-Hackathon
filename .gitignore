@@ -44,3 +44,6 @@ android/app/build/
 android/build/
 *.jks
 *.keystore
+
+# Large Windows installer binary (>100MB GitHub limit; built in release/)
+frontend/public/downloads/*.exe
