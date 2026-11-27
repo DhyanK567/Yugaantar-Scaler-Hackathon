@@ -35,7 +35,10 @@ export default function PrivacyIntelligencePage() {
   }, []);
 
   useEffect(() => {
-    loadIntelligence();
+    const id = setTimeout(() => {
+      void loadIntelligence();
+    }, 0);
+    return () => clearTimeout(id);
   }, [loadIntelligence]);
 
   const measured = intel?.status === "MEASURED";
