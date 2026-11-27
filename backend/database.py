@@ -172,6 +172,12 @@ def init_db() -> None:
                 deleted_at REAL
             )
         """)
+        _add_column_if_missing(conn, "datasets", "organisation_id", "TEXT")
+        _add_column_if_missing(conn, "datasets", "description", "TEXT DEFAULT ''")
+        _add_column_if_missing(conn, "datasets", "format", "TEXT DEFAULT 'CSV'")
+        _add_column_if_missing(conn, "datasets", "file_count", "INTEGER DEFAULT 0")
+        _add_column_if_missing(conn, "datasets", "sha256", "TEXT")
+        _add_column_if_missing(conn, "datasets", "deleted_at", "REAL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_datasets_org ON datasets(organisation_id)")
 
         # --- Processing Jobs (preserve existing table & migrate columns) ---

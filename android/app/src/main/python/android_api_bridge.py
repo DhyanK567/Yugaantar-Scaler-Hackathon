@@ -503,6 +503,20 @@ def handle_request(method: str, path: str, query_string: str, headers_json: str,
         with _get_db() as conn:
             return resp(200, [dict(r) for r in conn.execute("SELECT * FROM organisations ORDER BY joined_at ASC").fetchall()])
 
+    if path == "/api/organisations" and method == "POST":
+        payload = json.loads(body.decode("utf-8")) if body else {}
+        name = (payload.get("name") or "").strip()
+        if not name:
+            return resp(400, {"detail": "Organisation name is required"})
+        new_org_id = f"org-{secrets.token_hex(4)}"
+        with _get_db() as conn:
+            conn.execute(
+                "INSERT INTO organisations (id, name, org_type, region, status, records_contributed, joined_at) VALUES (?, ?, ?, ?, 'ACTIVE', 0, ?)",
+                (new_org_id, name, payload.get("org_type", "Hospital"), payload.get("region", "India"), time.time()),
+            )
+            row = conn.execute("SELECT * FROM organisations WHERE id = ?", (new_org_id,)).fetchone()
+        return resp(200, dict(row))
+
     if path == "/api/datasets" and method == "GET":
         with _get_db() as conn:
             return resp(200, [dict(r) for r in conn.execute("SELECT * FROM datasets WHERE organisation_id = ? ORDER BY created_at DESC", (org_id,)).fetchall()])
@@ -520,7 +534,7 @@ def handle_request(method: str, path: str, query_string: str, headers_json: str,
         )
         form_fields: Dict[str, str] = {}
         uploaded_files: List[Tuple[str, bytes]] = []
-        allowed_exts = {".csv", ".json", ".jsonl", ".txt", ".xml", ".ndjson"}
+        allowed_exts = {".csv", ".tsv", ".json", ".jsonl", ".txt"}
         for part in msg.iter_parts():
             cd = part.get("Content-Disposition", "")
             field_name = part.get_param("name", header="Content-Disposition")
@@ -532,7 +546,8 @@ def handle_request(method: str, path: str, query_string: str, headers_json: str,
                     return resp(400, {"detail": f"Unsupported file format: {ext or 'unknown'}"})
                 if len(payload_bytes) == 0:
                     return resp(400, {"detail": f"Empty file is not allowed: {filename}"})
-                safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(filename).name) or f"upload_{len(uploaded_files)}.csv"
+                raw_base = filename.replace("\\", "/").split("/")[-1]
+                safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", raw_base).lstrip(".") or f"upload_{len(uploaded_files)}{ext}"
                 uploaded_files.append((safe_name, payload_bytes))
             elif field_name:
                 form_fields[field_name] = payload_bytes.decode("utf-8", errors="replace")
@@ -562,6 +577,17 @@ def handle_request(method: str, path: str, query_string: str, headers_json: str,
         auto_proc = form_fields.get("auto_process", "true").lower() not in ("false", "0", "no")
         job = _run_privacy_job(ds_id, target_org, ds_dir, ds_name, user) if auto_proc else None
         return resp(200, {"dataset_id": ds_id, "job": job})
+
+    if path.startswith("/api/datasets/") and path != "/api/datasets/process-sample" and method == "GET":
+        ds_id = path.split("/")[3]
+        with _get_db() as conn:
+            row = conn.execute("SELECT * FROM datasets WHERE id = ? AND organisation_id = ?", (ds_id, org_id)).fetchone()
+            if not row:
+                return resp(404, {"detail": "Dataset not found"})
+            ds_jobs = [dict(r) for r in conn.execute("SELECT * FROM jobs WHERE dataset_id = ? ORDER BY created_at DESC", (ds_id,)).fetchall()]
+        d = dict(row)
+        d["jobs"] = ds_jobs
+        return resp(200, d)
 
     if path.startswith("/api/datasets/") and path != "/api/datasets/process-sample" and method == "DELETE":
         ds_id = path.split("/")[3]
@@ -610,20 +636,56 @@ def handle_request(method: str, path: str, query_string: str, headers_json: str,
 
     if path.startswith("/api/jobs/") and path.endswith("/download") and method == "GET":
         jid = path.split("/")[3]
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", jid):
+            return resp(400, {"detail": "Invalid job id"})
+        with _get_db() as conn:
+            jrow = conn.execute("SELECT * FROM jobs WHERE id = ? AND organisation_id = ?", (jid, org_id)).fetchone()
+        if not jrow:
+            return resp(404, {"detail": "Job not found"})
         job_out = _APP_DIR / "jobs" / jid / "output"
         if not job_out.exists():
             return resp(404, {"detail": "Job output not found"})
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for fp in job_out.rglob("*"):
-                if fp.is_file():
-                    zf.write(fp, fp.relative_to(job_out))
+                if not fp.is_file():
+                    continue
+                rel = fp.relative_to(job_out).as_posix()
+                # Never expose internal records.jsonl or quarantined source files
+                if rel == "records.jsonl" or rel.endswith("/records.jsonl") or rel.startswith("quarantine/"):
+                    continue
+                zf.write(fp, rel)
         return {
             "status": 200,
             "content_type": "application/zip",
             "headers": {"Content-Disposition": f'attachment; filename="{jid}_sanitized.zip"'},
             "body_b64": base64.b64encode(buf.getvalue()).decode("ascii"),
         }
+
+    if path.startswith("/api/jobs/") and path.endswith("/events") and method == "GET":
+        jid = path.split("/")[3]
+        with _get_db() as conn:
+            jrow = conn.execute("SELECT * FROM jobs WHERE id = ? AND organisation_id = ?", (jid, org_id)).fetchone()
+        if not jrow:
+            return resp(404, {"detail": "Job not found"})
+        return resp(200, [{"stage": "COMPLETED", "status": jrow["status"], "message": f"Release: {jrow['release_decision']}", "created_at": jrow["completed_at"] or jrow["created_at"]}])
+
+    if path.startswith("/api/jobs/") and path.endswith("/results") and method == "GET":
+        jid = path.split("/")[3]
+        with _get_db() as conn:
+            jrow = conn.execute("SELECT * FROM jobs WHERE id = ? AND organisation_id = ?", (jid, org_id)).fetchone()
+            if not jrow:
+                return resp(404, {"detail": "Job not found"})
+            pa = conn.execute("SELECT * FROM privacy_assessments WHERE job_id = ?", (jid,)).fetchone()
+            cr = conn.execute("SELECT * FROM clinical_reports WHERE job_id = ?", (jid,)).fetchone()
+            pp = conn.execute("SELECT * FROM passports WHERE job_id = ?", (jid,)).fetchone()
+        return resp(200, {
+            "job": dict(jrow),
+            "privacy_assessment": dict(pa) if pa else None,
+            "clinical_report": dict(cr) if cr else None,
+            "identity_cluster": {"status": "MEASURED", "records_linked": jrow["records_linked"], "precision": "NOT_MEASURED"},
+            "passport": dict(pp) if pp else None,
+        })
 
     if path.startswith("/api/jobs/") and method == "GET":
         jid = path.split("/")[3]
@@ -642,33 +704,134 @@ def handle_request(method: str, path: str, query_string: str, headers_json: str,
         rmap = json.loads(latest.get("details_json") or "{}").get("risk_map")
         return resp(200, {"status": "MEASURED", "assessments_count": len(rows), "total_pii_detected": sum(r["pii_detected"] for r in rows), "total_residual_leakage": sum(r["residual_leakage"] for r in rows), "canary_status": latest["canary_status"], "reid_risk_level": latest["reid_risk_level"], "risk_map": rmap, "assessments": rows})
 
-    if path in ("/api/clinical-reports", "/api/clinical/reports"):
+    if path == "/api/quarantine":
+        req_jid = (qs.get("job_id") or [None])[0]
+        with _get_db() as conn:
+            jrow = conn.execute("SELECT * FROM jobs WHERE id = ? AND organisation_id = ?", (req_jid, org_id)).fetchone() if req_jid else conn.execute("SELECT * FROM jobs WHERE organisation_id = ? ORDER BY created_at DESC LIMIT 1", (org_id,)).fetchone()
+        if not jrow:
+            return resp(200, {"status": "NOT_RUN", "items": [], "total_quarantined": 0})
+        rep_path = _APP_DIR / "jobs" / jrow["id"] / "output" / "report.json"
+        items: List[Dict[str, Any]] = []
+        if rep_path.is_file():
+            rep = json.loads(rep_path.read_text(encoding="utf-8"))
+            for qf in (rep.get("quarantined_files") or rep.get("quarantine") or []):
+                if isinstance(qf, dict):
+                    items.append({"filename": Path(str(qf.get("file", qf.get("filename", "unknown")))).name, "reason": qf.get("reason", "Quarantined by engine"), "status": "QUARANTINED"})
+                else:
+                    items.append({"filename": Path(str(qf)).name, "reason": "Quarantined by engine", "status": "QUARANTINED"})
+        return resp(200, {"status": "MEASURED", "job_id": jrow["id"], "total_quarantined": jrow["files_quarantined"], "items": items})
+
+    if path in ("/api/identity/clusters", "/api/identity-graph"):
+        req_jid = (qs.get("job_id") or [None])[0]
+        with _get_db() as conn:
+            jrow = conn.execute("SELECT * FROM jobs WHERE id = ? AND organisation_id = ?", (req_jid, org_id)).fetchone() if req_jid else conn.execute("SELECT * FROM jobs WHERE organisation_id = ? ORDER BY created_at DESC LIMIT 1", (org_id,)).fetchone()
+        if not jrow:
+            return resp(200, {"status": "NOT_MEASURED", "precision": "NOT_MEASURED", "clusters": [], "records_linked": 0})
+        return resp(200, {"status": "MEASURED", "job_id": jrow["id"], "precision": "NOT_MEASURED", "records_processed": jrow["records_processed"], "records_linked": jrow["records_linked"], "clusters": []})
+
+    if path in ("/api/threat-lab", "/api/attack-simulator/run"):
+        with _get_db() as conn:
+            jrow = conn.execute("SELECT * FROM jobs WHERE organisation_id = ? ORDER BY created_at DESC LIMIT 1", (org_id,)).fetchone()
+        if not jrow:
+            return resp(200, {"status": "NOT_RUN", "vectors": [], "summary": {}})
+        pi_path = _APP_DIR / "jobs" / jrow["id"] / "output" / "privacy_intelligence.json"
+        pi_data = json.loads(pi_path.read_text(encoding="utf-8")) if pi_path.is_file() else {}
+        atk = pi_data.get("attack_simulation") or {}
+        return resp(200, {"status": "EXECUTED", "job_id": jrow["id"], "attack_simulation": atk, "risk_summary": pi_data.get("risk_summary") or {}})
+
+    if path == "/api/privacy/assessments":
+        with _get_db() as conn:
+            return resp(200, [dict(r) for r in conn.execute("SELECT * FROM privacy_assessments WHERE organisation_id = ? ORDER BY created_at DESC", (org_id,)).fetchall()])
+
+    if path.startswith("/api/privacy/assessments/") and method == "GET":
+        aid = path.split("/")[4]
+        with _get_db() as conn:
+            row = conn.execute("SELECT * FROM privacy_assessments WHERE id = ? AND organisation_id = ?", (aid, org_id)).fetchone()
+        return resp(200, dict(row)) if row else resp(404, {"detail": "Assessment not found"})
+
+    if path in ("/api/clinical-reports", "/api/clinical/reports") and method == "GET":
         with _get_db() as conn:
             return resp(200, [dict(r) for r in conn.execute("SELECT * FROM clinical_reports WHERE organisation_id = ? ORDER BY created_at DESC", (org_id,)).fetchall()])
+
+    if path.startswith("/api/clinical/reports/") and method == "GET":
+        cid = path.split("/")[4]
+        with _get_db() as conn:
+            row = conn.execute("SELECT * FROM clinical_reports WHERE id = ? AND organisation_id = ?", (cid, org_id)).fetchone()
+        return resp(200, dict(row)) if row else resp(404, {"detail": "Clinical report not found"})
 
     if path == "/api/passports":
         with _get_db() as conn:
             return resp(200, [dict(r) for r in conn.execute("SELECT * FROM passports WHERE organisation_id = ? ORDER BY created_at DESC", (org_id,)).fetchall()])
 
+    if path.startswith("/api/passports/") and path.endswith("/download") and method == "GET":
+        pid = path.split("/")[3]
+        fmt = (qs.get("format") or ["json"])[0].lower()
+        with _get_db() as conn:
+            row = conn.execute("SELECT * FROM passports WHERE id = ? AND organisation_id = ?", (pid, org_id)).fetchone()
+        if not row:
+            return resp(404, {"detail": "Passport not found"})
+        if fmt == "html":
+            pp = json.loads(row["passport_json"] or "{}")
+            html = f"<html><body><h1>MediLocker Privacy Passport</h1><p>ID: {pid}</p><p>Status: {row['signature_status']}</p><pre>{json.dumps(pp, indent=2)}</pre></body></html>"
+            return {"status": 200, "content_type": "text/html; charset=utf-8", "headers": {"Content-Disposition": f'attachment; filename="{pid}.html"'}, "body_b64": base64.b64encode(html.encode("utf-8")).decode("ascii")}
+        return {"status": 200, "content_type": "application/json", "headers": {"Content-Disposition": f'attachment; filename="{pid}.json"'}, "body_b64": base64.b64encode((row["passport_json"] or "{}").encode("utf-8")).decode("ascii")}
+
     if path.startswith("/api/passports/") and path.endswith("/verify") and method == "POST":
         pid = path.split("/")[3]
         with _get_db() as conn:
-            row = conn.execute("SELECT * FROM passports WHERE id = ?", (pid,)).fetchone()
+            row = conn.execute("SELECT * FROM passports WHERE id = ? AND organisation_id = ?", (pid, org_id)).fetchone()
         if not row:
             return resp(404, {"detail": "Passport not found"})
         job_out = _APP_DIR / "jobs" / row["job_id"] / "output"
         vres = verify_passport_bundle(job_out / "privacy_passport.json", job_out, manifest_path=job_out / "dataset_manifest.json")
         return resp(200, {"passport_id": pid, "integrity_valid": bool(vres.get("valid")), "signature_status": row["signature_status"], "manifest_hash": row["manifest_hash"], "details": vres.get("details", [])})
 
+    if path.startswith("/api/passports/") and method == "GET":
+        pid = path.split("/")[3]
+        with _get_db() as conn:
+            row = conn.execute("SELECT * FROM passports WHERE id = ? AND organisation_id = ?", (pid, org_id)).fetchone()
+        return resp(200, dict(row)) if row else resp(404, {"detail": "Passport not found"})
+
     if path in ("/api/audit", "/api/audit/events"):
         with _get_db() as conn:
             return resp(200, [dict(r) for r in conn.execute("SELECT * FROM audit_events ORDER BY timestamp DESC LIMIT 50").fetchall()])
 
-    if path in ("/api/research-requests", "/api/research/requests"):
+    if path in ("/api/research-requests", "/api/research/requests") and method == "GET":
         with _get_db() as conn:
             return resp(200, [dict(r) for r in conn.execute("SELECT * FROM research_requests ORDER BY created_at DESC").fetchall()])
 
-    if path == "/api/settings":
+    if path == "/api/research/requests" and method == "POST":
+        payload = json.loads(body.decode("utf-8")) if body else {}
+        rid = f"req-{secrets.token_hex(4)}"
+        with _get_db() as conn:
+            conn.execute(
+                "INSERT INTO research_requests (id, title, requestor_org, target_orgs, dataset_id, purpose, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?)",
+                (rid, payload.get("title", "Research Study"), payload.get("requestor_org", "Research Partner"), json.dumps(payload.get("target_orgs", [])), payload.get("dataset_id", ""), payload.get("purpose", ""), time.time()),
+            )
+            row = conn.execute("SELECT * FROM research_requests WHERE id = ?", (rid,)).fetchone()
+        return resp(200, dict(row))
+
+    if path.startswith("/api/research/requests/") and (path.endswith("/approve") or path.endswith("/reject")) and method == "POST":
+        rid = path.split("/")[4]
+        new_st = "APPROVED" if path.endswith("/approve") else "REJECTED"
+        with _get_db() as conn:
+            conn.execute("UPDATE research_requests SET status = ? WHERE id = ?", (new_st, rid))
+            row = conn.execute("SELECT * FROM research_requests WHERE id = ?", (rid,)).fetchone()
+        return resp(200, dict(row)) if row else resp(404, {"detail": "Request not found"})
+
+    if path == "/api/settings" and method == "GET":
         return resp(200, {"offline_mode": True, "cpu_only": True, "policy": {"date_shift_max_days": 180, "min_group_size": 5, "age_band_width": 5}})
+
+    if path == "/api/settings" and method == "POST":
+        payload = json.loads(body.decode("utf-8")) if body else {}
+        ds_days = int(payload.get("date_shift_max_days", 180))
+        mg_size = int(payload.get("min_group_size", 5))
+        ab_width = int(payload.get("age_band_width", 5))
+        if not (1 <= ds_days <= 365) or mg_size < 2 or not (1 <= ab_width <= 20):
+            return resp(400, {"detail": "Invalid privacy policy parameters"})
+        return resp(200, {"offline_mode": True, "cpu_only": True, "policy": {"date_shift_max_days": ds_days, "min_group_size": mg_size, "age_band_width": ab_width}})
+
+    if path == "/api/system/diagnostics":
+        return resp(200, {"offline_mode": True, "cpu_only": True, "engine_loaded": True, "db_path": str(_DB_PATH), "storage_ready": _APP_DIR.exists()})
 
     return resp(404, {"detail": f"Endpoint not found: {path}"})
