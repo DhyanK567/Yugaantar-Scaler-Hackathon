@@ -264,7 +264,10 @@ All protected endpoints require either an `HttpOnly` `medilocker_session` cookie
 | `GET`/`POST` | `/api/jobs` | List jobs / start job on dataset | User / Privacy Officer+ |
 | `GET` | `/api/jobs/{id}` | Job detail + stage events | Org Member |
 | `GET` | `/api/jobs/{id}/results` | Privacy, clinical, identity, and passport results | Org Member |
-| `GET` | `/api/jobs/{id}/download` | Download ZIP (`sanitized/`, `report.json`, `records.jsonl`) | Org Member |
+| `GET` | `/api/jobs/{id}/download` | Download ZIP (`sanitized/`, `report.json`, `privacy_passport.json`; `records.jsonl` excluded by default) | Org Member |
+| `GET` | `/api/jobs/{id}/report.json` | Download processing `report.json` | Org Member |
+| `GET` | `/api/jobs/{id}/mapping` | Restricted download of sensitive `records.jsonl` patient mapping | Org Admin / Privacy Officer |
+| `GET` | `/api/jobs/{id}/privacy-report.pdf` | Generate 3-page MediLocker Privacy & Integrity Report PDF | Org Member |
 | `GET` | `/api/privacy-intelligence` | Aggregated privacy assessments | Org Member |
 | `GET` | `/api/identity/clusters` | Pseudonymous identity graph & metrics | Org Member |
 | `GET` | `/api/clinical/reports` | Clinical preservation & FHIR R4 reports | Org Member |
@@ -343,11 +346,10 @@ Measured on synthetic benchmark dataset `dev/input` (`200` files, `823` records,
 
 ---
 
-## 10. PDF Reporting (`generate_pdf.py`)
+## 10. PDF Reporting (`generate_pdf.py` & Live Privacy Report)
 
-- **Purpose:** Standalone utility using `reportlab` (`SimpleDocTemplate`, `A4`, `platypus`) to generate the 2-page hackathon project brief PDF.
-- **Outputs:** `starter/GuptKavach_Project_Brief.pdf` and `docs/GuptKavach_Project_Brief.pdf`.
-- **Integration Status:** **Standalone utility** — executed via `python generate_pdf.py` and not connected to the FastAPI/Next.js runtime.
+- **2-Page Project Brief (`generate_pdf.py`):** Standalone utility generating `starter/GuptKavach_Project_Brief.pdf` and `docs/GuptKavach_Project_Brief.pdf` (plus `submission/MediLocker_Project_Brief.pdf`).
+- **Live 3-Page Privacy & Integrity Report (`backend/privacy_report_pdf.py`):** Authenticated endpoint `GET /api/jobs/{job_id}/privacy-report.pdf` wired to the dashboard (`Protect Data`, `Datasets`, and `Reports` pages) generating a 3-page monochrome assessment PDF from live SQLite & Privacy Passport verification data.
 
 ---
 

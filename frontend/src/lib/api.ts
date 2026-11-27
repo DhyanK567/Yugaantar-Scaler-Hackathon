@@ -449,6 +449,7 @@ export interface ClinicalReport {
   lab_integrity: number | null;
   vital_integrity: number | null;
   fhir_integrity: string;
+  details_json?: string;
   created_at: number;
 }
 
@@ -687,6 +688,18 @@ export const api = {
     }>("/api/system/diagnostics"),
   briefPdfUrl: () => `${API_BASE}/api/reports/brief-pdf`,
   privacyReportPdfUrl: (jobId: string) => `${API_BASE}/api/jobs/${jobId}/privacy-report.pdf`,
+  jobResults: (jobId: string) =>
+    request<{
+      job: JobRecord;
+      privacy_assessment: PrivacyAssessment | null;
+      clinical_report: ClinicalReport | null;
+      identity_cluster: Record<string, unknown> | null;
+      passport: Passport | null;
+    }>(`/api/jobs/${jobId}/results`),
+  jobReportJsonUrl: (jobId: string) => `${API_BASE}/api/jobs/${jobId}/report.json`,
+  jobMappingUrl: (jobId: string) => `${API_BASE}/api/jobs/${jobId}/mapping`,
+  jobBundleUrl: (jobId: string, includeMapping = false) =>
+    `${API_BASE}/api/jobs/${jobId}/download?include_mapping=${includeMapping ? "true" : "false"}`,
   downloadPrivacyReportPdf: async (jobId: string): Promise<Blob> => {
     const res = await fetch(`${API_BASE}/api/jobs/${jobId}/privacy-report.pdf`, {
       credentials: "include",
