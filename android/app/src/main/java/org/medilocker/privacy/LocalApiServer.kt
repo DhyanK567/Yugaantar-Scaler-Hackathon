@@ -93,6 +93,9 @@ class LocalApiServer(
     }
 
     private fun serveStaticAsset(rawUri: String): Response {
+        if (rawUri.contains("..")) {
+            return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "Invalid path")
+        }
         val clean = rawUri.trimStart('/')
         val candidates = if (clean.isEmpty()) {
             listOf("www/index.html")
