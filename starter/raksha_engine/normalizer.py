@@ -74,9 +74,13 @@ HONORIFICS_DEVA = {
 }
 
 
+_FULLWIDTH_TO_ASCII_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
+
+
 def normalize_digits(text: str) -> str:
-    """Normalize Devanagari and Eastern digits to standard ASCII 0-9."""
-    return text.translate(DEVA_TO_ASCII_DIGITS)
+    """Normalize Devanagari/fullwidth digits to ASCII 0-9 and NFC-normalize scripts."""
+    import unicodedata
+    return unicodedata.normalize("NFC", text).translate(DEVA_TO_ASCII_DIGITS).translate(_FULLWIDTH_TO_ASCII_DIGITS)
 
 
 def is_devanagari(text: str) -> bool:

@@ -28,6 +28,7 @@ from raksha_engine.linking import (
     RecordClues,
     extract_clues_from_text,
     merge_clues,
+    parse_exact_dob,
     resolve_identities,
     set_name_clue,
 )
@@ -190,6 +191,9 @@ def _extract_json_clues(
             if m:
                 clues.age = int(m.group(0))
         elif kind == "DOB":
+            edob = parse_exact_dob(node)
+            if edob:
+                clues.exact_dob = edob
             ym = re.search(r"(19\d{2}|20\d{2})", node)
             if ym:
                 clues.birth_year = int(ym.group(1))
@@ -320,6 +324,9 @@ def main() -> int:
                                 if m:
                                     clues.age = int(m.group(0))
                             elif ck == "DOB" and cell.strip():
+                                edob = parse_exact_dob(cell)
+                                if edob:
+                                    clues.exact_dob = edob
                                 ym = re.search(r"(19\d{2}|20\d{2})", cell)
                                 if ym:
                                     clues.birth_year = int(ym.group(1))
