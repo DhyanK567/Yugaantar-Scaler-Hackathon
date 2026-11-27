@@ -17,7 +17,9 @@ from .patterns import (
     RX_AADHAAR_MASKED,
     RX_ABHA_ADDR,
     RX_ABHA_NUM,
+    RX_CANARY,
     RX_DOB_LABEL,
+    RX_DRIVING_LICENCE,
     RX_EMAIL,
     RX_HOUSE,
     RX_INSURANCE,
@@ -25,9 +27,11 @@ from .patterns import (
     RX_LOCALITY,
     RX_MRN,
     RX_PAN,
+    RX_PASSPORT_LABEL,
     RX_PHONE,
     RX_PHONE_MASKED,
     RX_PIN,
+    RX_VOTER_ID,
     RX_VILLAGE_BEFORE_TEHSIL,
     RX_VILLAGE_LABEL,
     classify_field,
@@ -111,14 +115,23 @@ def sanitize_free_text(
             ("[ABHA_NUMBER]", RX_ABHA_NUM),
             ("[AADHAAR]", RX_AADHAAR),
             ("[AADHAAR_MASKED]", RX_AADHAAR_MASKED),
+            ("[DRIVING_LICENCE]", RX_DRIVING_LICENCE),
             ("[INSURANCE_ID]", RX_INSURANCE),
             ("[MRN]", RX_MRN),
             ("[PHONE]", RX_PHONE),
             ("[PHONE_MASKED]", RX_PHONE_MASKED),
+            ("[VOTER_ID]", RX_VOTER_ID),
             ("[PAN]", RX_PAN),
         ):
             work, n = rx.subn(tag, work)
             total += n
+
+        def _sub_passport(m: re.Match[str]) -> str:
+            nonlocal total
+            total += 1
+            return f"{m.group(1)}[PASSPORT]"
+
+        work = RX_PASSPORT_LABEL.sub(_sub_passport, work)
 
         # 3. DOB labels
         def _sub_dob(m: re.Match[str]) -> str:
@@ -235,8 +248,10 @@ def sanitize_filename(
 
         has_non_ascii = any(ord(ch) > 127 for ch in stem)
         has_unsafe_chars = bool(_UNSAFE_PATH_CHARS.search(stem))
-        # Also flag suspiciously long or multi-digit numeric tokens (>=6 digits) in filenames
-        has_long_digits = bool(re.search(r"\d{6,}", stem))
+        # Also flag suspiciously long or multi-digit numeric tokens (>=6 digits) and hospital/MRN ID patterns in filenames
+        has_long_digits = bool(re.search(r"\d{6,}", stem)) or bool(
+            re.search(r"(?i)(?:^|[_\-\s.])(?:IP|IPD|OPD|UHID|ADM|MRN|DHH|SNJ|JJH)[-_]?\d{2,}(?:[-_]\d{2,})?(?:$|[_\-\s.])", stem)
+        )
 
         if pii_found or has_non_ascii or has_unsafe_chars or has_long_digits:
             changed = True
@@ -287,6 +302,12 @@ def sanitize_structured_cell(
         return "[ABHA_NUMBER]", 1, False
     if kind == "PAN":
         return "[PAN]", 1, False
+    if kind == "VOTER_ID":
+        return "[VOTER_ID]", 1, False
+    if kind == "DRIVING_LICENCE":
+        return "[DRIVING_LICENCE]", 1, False
+    if kind == "PASSPORT":
+        return "[PASSPORT]", 1, False
     if kind == "INSURANCE_ID":
         return "[INSURANCE_ID]", 1, False
     if kind == "MRN":

@@ -109,9 +109,9 @@ _EPONYM_SUFFIXES = {"disease", "syndrome", "lymphoma", "palsy", "triad", "sign"}
 
 RX_LABELED_NAME = re.compile(
     r"(?im)(?P<prefix>\b(?:Patient\s*Name|Pt\.?\s*Name|Patient|Pt\.|Beneficiary|Name|Report\s+of|"
-    r"Mareez|Rogi(?:\s+ka\s+naam)?|नाम|मरीज|रोगी\s*का\s*नाम)\s*[:\-]\s*)"
+    r"(?:Mareez|Rogi)(?:\s+ka\s+naam)?|नाम|मरीज|रोगी\s*का\s*नाम)\s*[:\-]\s*)"
     r"(?!Dr\.?\s)(?P<name>[A-Za-z\u0900-\u097f][A-Za-z\u0900-\u097f.\s]{1,45}?)"
-    r"(?=\s*(?:\n|,|;|\||आयु|Age|\d+\s*(?:Y|yrs|वर्ष)|$))"
+    r"(?=\s*(?:\n|,|;|\||\.|आयु|Age|\d+\s*(?:Y|yrs|वर्ष)|$))"
 )
 
 RX_REPORT_OF = re.compile(
@@ -140,12 +140,14 @@ RX_CONTEXT_PERSON = re.compile(
 # Multilingual Relatives (S/o, D/o, W/o, H/o, Caregiver, Father, Mother, etc. in English & Hindi)
 RX_RELATIVE = re.compile(
     r"(?m)(?P<rel>(?<!\w)(?:"
-    r"S/o|D/o|W/o|H/o|s/o|d/o|w/o|h/o|"
-    r"Father|Husband|Wife|Mother|Son|Daughter|Guardian|Caregiver|Attendant|Witness|"
+    r"S/O|D/O|W/O|H/O|S/o|D/o|W/o|H/o|s/o|d/o|w/o|h/o|"
+    r"Father|Husband|Wife|Mother|Son|Daughter|Brother|Sister|Uncle|Aunt|Spouse|Cousin|Nephew|Niece|"
+    r"brother|sister|uncle|aunt|spouse|cousin|nephew|niece|"
+    r"Guardian|Caregiver|Attendant|Witness|"
     r"पिता|माता|पति|पत्नी|पुत्र|पुत्री|बेटा|बेटी|के\s+पुत्र|की\s+पत्नी|सपुत्र|वल्द|अभिभावक|परिचारक|गवाह|"
-    r"pita\s+ka\s+naam|pita|mata|pati|patni|beta|beti|walad"
+    r"(?i:pita\s+ka\s+naam|mata\s+ka\s+naam|pati\s+ka\s+naam|patni\s+ka\s+naam|pita|mata|pati|patni|beta|beti|walad)"
     r")(?:\s*[:\-]\s*|\s+(?:of\s+)?))"
-    r"(?P<name>[A-Za-z\u0900-\u097f][A-Za-z\u0900-\u097f.\s]{1,35}?)(?=\s*(?:\n|,|;|\)|$))"
+    r"(?P<name>[A-Za-z\u0900-\u097f][A-Za-z\u0900-\u097f.\s]{1,35}?)(?=\s*(?:\n|,|;|\)|\.|who\b|which\b|signed\b|$))"
 )
 
 # C/O followed by person name (specifically guarding against "C/O fever", "C/O cough" etc.)
@@ -256,6 +258,23 @@ def extract_names_from_text(text: str, index: CorpusNameIndex) -> None:
             index.add_name(name)
 
 
+_INDIAN_GIVEN_NAMES = frozenset({
+    "aarav", "vivaan", "aditya", "vihaan", "arjun", "reyansh", "krishna", "ananya", "diya",
+    "saanvi", "aadhya", "kavita", "sunita", "meera", "priya", "farhan", "zoya", "harpreet",
+    "gurpreet", "rohan", "nikhil", "sneha", "pooja", "ramesh", "suresh", "lakshmi", "deepak",
+    "meenakshi", "rajesh", "anita", "geeta", "reena", "salma", "usha", "parvati", "shahid",
+    "fatima", "sunil", "tariq", "arvind", "rajeshwar", "harjinder", "sunanda", "rekha", "asha",
+    "vikram", "amit", "sumit", "neha", "nisha", "rahul", "sanjay", "manoj", "prakash", "mahesh",
+})
+_INDIAN_SURNAMES = frozenset({
+    "sharma", "verma", "deshmukh", "kulkarni", "subramanian", "sundaram", "nair", "iyer",
+    "iyengar", "patel", "siddiqui", "khan", "kaur", "gill", "chatterjee", "banerjee",
+    "mukherjee", "ganguly", "reddy", "rao", "mishra", "tiwari", "joshi", "gupta", "agarwal",
+    "bansal", "singh", "kumar", "devi", "bano", "nishad", "chauhan", "ansari", "pandey",
+    "yadav", "patil", "shinde", "jadhav", "bhat", "hegde", "menon", "pillai", "das",
+})
+
+
 def redact_names_in_text(
     text: str,
     index: CorpusNameIndex,
@@ -334,6 +353,21 @@ def redact_names_in_text(
             return cand
 
         work = re.sub(r"\b[A-Z][a-z]{2,18}(?:\s+[A-Z][a-z]{2,18}){1,2}\b", _sub_phonetic, work)
+
+    # 5b. Unlabeled Indian full names (gazetteer-anchored, strictly guarded by clinical/doctor/org protection)
+    def _sub_unlabeled_indian(m: re.Match[str]) -> str:
+        nonlocal count
+        cand = m.group(0)
+        if is_clinical_phrase(cand):
+            return cand
+        toks = [t.casefold() for t in cand.split()]
+        if len(toks) >= 2 and (toks[0] in _INDIAN_GIVEN_NAMES or toks[-1] in _INDIAN_SURNAMES):
+            if not any(t in CLINICAL_STOPWORDS for t in toks):
+                count += 1
+                return "[PATIENT_NAME]"
+        return cand
+
+    work = re.sub(r"\b[A-Z][a-z]{2,18}\s+[A-Z][a-z]{2,18}\b", _sub_unlabeled_indian, work)
 
     # 6. Record/file-local first names
     if local_first_names:

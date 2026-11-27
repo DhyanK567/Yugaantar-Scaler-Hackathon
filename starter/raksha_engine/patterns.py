@@ -46,6 +46,9 @@ _COL_RULES: list[tuple[str, re.Pattern[str]]] = [
     ("AADHAAR", re.compile(r"\b(aadhaar|aadhar|uidai|आधार|आधार\s*कार्ड)\b")),
     ("ABHA_NUMBER", re.compile(r"\b(abha|health\s*id|ndhm|आभा)\b")),
     ("PAN", re.compile(r"\b(pan|payer\s*pan|pan\s*no|pan\s*card|पैन)\b")),
+    ("VOTER_ID", re.compile(r"\b(voter\s*(?:id|no|card)?|epic\s*(?:no|id|num)?|मतदाता\s*पहचान)\b")),
+    ("DRIVING_LICENCE", re.compile(r"\b(driving\s*licen[cs]e|dl\s*(?:no|num|number)|ड्राइविंग\s*लाइसेंस)\b")),
+    ("PASSPORT", re.compile(r"\b(passport\s*(?:no|num|number|id)?|पासपोर्ट)\b")),
     (
         "INSURANCE_ID",
         re.compile(
@@ -137,9 +140,13 @@ RX_AADHAAR_MASKED = re.compile(r"(?i)\b[X*]{4}[\s-]?[X*]{4}[\s-]?\d{4}\b")
 RX_PHONE = re.compile(r"(?<!\d)(?:(?:\+?91[\s-]?|\(?0\)?[\s-]?)|\(\+?91\)\s*)?[6-9]\d{4}[\s-]?\d{5}(?!\d)")
 RX_PHONE_MASKED = re.compile(r"(?i)(?<!\d)[6-9]\d[X*]{4,6}\d{2,4}(?!\d)")
 
-# Email and PAN
+# Email, PAN, Voter ID (EPIC), Driving Licence, Passport (contextual), and Canary
 RX_EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
 RX_PAN = re.compile(r"\b[A-Z]{5}\d{4}[A-Z]\b")
+RX_VOTER_ID = re.compile(r"\b[A-Z]{3}\d{7}\b")
+RX_DRIVING_LICENCE = re.compile(r"\b[A-Z]{2}\d{2}[\s-]?(?:19|20)\d{2}\d{7}\b")
+RX_PASSPORT_LABEL = re.compile(r"(?im)(\bPassport(?:\s*(?:No|Number|ID))?\s*[:\-]\s*)([A-Z]\d{7})\b")
+RX_CANARY = re.compile(r"\bCANARY_[A-Z0-9_]{3,}\b")
 
 # Hospital MRN / UHID / IPD / OPD / PMJAY / Policy / Bill IDs
 RX_MRN = re.compile(

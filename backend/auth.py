@@ -49,6 +49,8 @@ ROLE_ORG_ADMIN = "ORG_ADMIN"
 ROLE_PRIVACY_OFFICER = "PRIVACY_OFFICER"
 ROLE_RESEARCHER = "RESEARCHER"
 ROLE_AUDITOR = "AUDITOR"
+ROLE_LOCAL_EVALUATOR = "LOCAL_EVALUATOR"
+JUDGE_WORKSPACE_ID = "org-judge-eval"
 
 ALL_ROLES = {
     ROLE_PLATFORM_ADMIN,
@@ -56,6 +58,7 @@ ALL_ROLES = {
     ROLE_PRIVACY_OFFICER,
     ROLE_RESEARCHER,
     ROLE_AUDITOR,
+    ROLE_LOCAL_EVALUATOR,
 }
 
 # Simple in-memory rate limiter (key -> list of timestamps)
@@ -223,35 +226,49 @@ def is_offline_mode_enabled() -> bool:
 
 def _get_or_create_judge_user_context() -> Dict[str, Any]:
     """Return deterministic synthetic evaluator context for Offline Judge Mode."""
-    judge_org_id = "org-judge-eval"
+    judge_org_id = JUDGE_WORKSPACE_ID
     judge_uid = "usr-judge-evaluator"
     judge_email = "judge@local.medilocker"
+    mem_id = f"mem-{judge_uid}-{judge_org_id}"
     now = time.time()
     with get_db() as conn:
         conn.execute(
             """
             INSERT OR IGNORE INTO organisations (id, name, org_type, region, status, records_contributed, joined_at)
-            VALUES (?, 'Local Evaluation Ward (Synthetic)', 'Evaluation Sandbox', 'Offline Local', 'Active', 0, ?)
+            VALUES (?, 'Local Evaluation Workspace', 'Evaluation Sandbox', 'Offline Local', 'Active', 0, ?)
             """,
             (judge_org_id, now),
         )
         conn.execute(
+            "UPDATE organisations SET name = 'Local Evaluation Workspace' WHERE id = ?",
+            (judge_org_id,),
+        )
+        conn.execute(
             """
             INSERT OR IGNORE INTO users (id, email, full_name, status, platform_role, created_at)
-            VALUES (?, ?, 'Local Judge Evaluator', 'ACTIVE', 'USER', ?)
+            VALUES (?, ?, 'Local Evaluator', 'ACTIVE', 'USER', ?)
             """,
             (judge_uid, judge_email, now),
+        )
+        conn.execute(
+            "UPDATE users SET full_name = 'Local Evaluator' WHERE id = ?",
+            (judge_uid,),
         )
         conn.execute(
             """
             INSERT OR IGNORE INTO memberships (id, user_id, organisation_id, role, created_at)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (f"mem-{judge_uid}-{judge_org_id}", judge_uid, judge_org_id, ROLE_PRIVACY_OFFICER, now),
+            (mem_id, judge_uid, judge_org_id, ROLE_LOCAL_EVALUATOR, now),
+        )
+        conn.execute(
+            "UPDATE memberships SET role = ? WHERE id = ?",
+            (ROLE_LOCAL_EVALUATOR, mem_id),
         )
     ctx = load_user_context(judge_uid, judge_org_id)
     if ctx:
         ctx["judge_mode"] = True
+        ctx["active_role"] = ROLE_LOCAL_EVALUATOR
         return ctx
     raise HTTPException(status_code=500, detail="Failed to initialise Judge Mode evaluator context")
 
@@ -544,6 +561,9 @@ def get_current_user_optional(
     medilocker_session: Optional[str] = Cookie(default=None),
     authorization: Optional[str] = Header(default=None),
 ) -> Optional[Dict[str, Any]]:
+    # In explicit Offline Judge Mode, decouple from any stale browser session cookies
+    if is_judge_mode():
+        return _get_or_create_judge_user_context()
     raw_token = _extract_token(medilocker_session, authorization)
     if not raw_token:
         return None
@@ -599,6 +619,13 @@ def require_org_access(
     organisation_id: str,
     allowed_roles: Optional[Iterable[str]] = None,
 ) -> str:
+    if is_judge_mode() and user.get("judge_mode"):
+        if organisation_id != JUDGE_WORKSPACE_ID:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied outside Local Evaluation Workspace",
+            )
+        return ROLE_LOCAL_EVALUATOR
     if not user_has_org_access(user, organisation_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

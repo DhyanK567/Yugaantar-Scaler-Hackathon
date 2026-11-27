@@ -56,6 +56,7 @@ class RecordClues:
     full_phonetic_name: str = ""
     gender: str = ""
     birth_year: int | None = None
+    exact_dob: str = ""
     age: int | None = None
     pin: str = ""
     district: str = ""
@@ -88,6 +89,22 @@ def _norm_phone(val: str) -> str:
     d = re.sub(r"\D", "", normalize_digits(val))
     if len(d) >= 10:
         return d[-10:]
+    return ""
+
+
+def parse_exact_dob(raw: str) -> str:
+    """Normalize YYYY-MM-DD or DD/MM/YYYY / DD-MM-YYYY date strings to YYYY-MM-DD."""
+    s = normalize_digits((raw or "").strip())
+    m_iso = re.search(r"\b(19\d{2}|20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b", s)
+    if m_iso:
+        y, mo, d = int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3))
+        if 1 <= mo <= 12 and 1 <= d <= 31:
+            return f"{y:04d}-{mo:02d}-{d:02d}"
+    m_dmy = re.search(r"\b(\d{1,2})[-/](\d{1,2})[-/](19\d{2}|20\d{2})\b", s)
+    if m_dmy:
+        d, mo, y = int(m_dmy.group(1)), int(m_dmy.group(2)), int(m_dmy.group(3))
+        if 1 <= mo <= 12 and 1 <= d <= 31:
+            return f"{y:04d}-{mo:02d}-{d:02d}"
     return ""
 
 
@@ -151,6 +168,9 @@ def extract_clues_from_text(record_id: str, text: str) -> RecordClues:
 
     m_dob = RX_DOB_LABEL.search(t)
     if m_dob:
+        edob = parse_exact_dob(m_dob.group(1))
+        if edob:
+            clues.exact_dob = edob
         ym = re.search(r"(19\d{2}|20\d{2})", m_dob.group(1))
         if ym:
             clues.birth_year = int(ym.group(1))
@@ -170,6 +190,8 @@ def merge_clues(base: RecordClues, extra: RecordClues) -> None:
         base.gender = extra.gender
     if not base.birth_year and extra.birth_year:
         base.birth_year = extra.birth_year
+    if not base.exact_dob and extra.exact_dob:
+        base.exact_dob = extra.exact_dob
     if not base.age and extra.age:
         base.age = extra.age
     if not base.pin and extra.pin:
@@ -210,6 +232,8 @@ def _compatible(a: RecordClues, b: RecordClues) -> bool:
     if a.gender and b.gender and a.gender != b.gender:
         return False
     if a.birth_year and b.birth_year and abs(a.birth_year - b.birth_year) > 1:
+        return False
+    if a.exact_dob and b.exact_dob and a.exact_dob != b.exact_dob:
         return False
     if a.age is not None and b.age is not None and abs(a.age - b.age) > 3:
         return False
@@ -364,7 +388,10 @@ def resolve_identities(all_clues: list[RecordClues]) -> dict[str, str | None]:
                     continue
                 score = 0
                 has_strong_demog = False
-                if ci.birth_year and cj.birth_year and ci.birth_year == cj.birth_year:
+                if ci.exact_dob and cj.exact_dob and ci.exact_dob == cj.exact_dob:
+                    score += 3
+                    has_strong_demog = True
+                elif ci.birth_year and cj.birth_year and ci.birth_year == cj.birth_year:
                     score += 2
                     has_strong_demog = True
                 if ci.age is not None and cj.age is not None and ci.age == cj.age:
@@ -396,12 +423,13 @@ def resolve_identities(all_clues: list[RecordClues]) -> dict[str, str | None]:
                     continue
                 if not (ci.birth_year and cj.birth_year and ci.birth_year == cj.birth_year):
                     continue
+                exact_dob_match = bool(ci.exact_dob and cj.exact_dob and ci.exact_dob == cj.exact_dob)
                 geo_match = (
                     (ci.pin and cj.pin and ci.pin == cj.pin)
                     or (ci.district and cj.district and ci.district.casefold() == cj.district.casefold())
                     or (ci.village and cj.village and ci.village.casefold() == cj.village.casefold())
                 )
-                if geo_match:
+                if geo_match or exact_dob_match:
                     union(i, j, "MATCH_INITIAL_CORROBORATED")
 
     clusters: dict[int, list[int]] = {}

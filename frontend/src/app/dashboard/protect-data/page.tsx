@@ -309,19 +309,25 @@ export default function ProtectDataPage() {
             </div>
             <div>
               <label className="block text-[12px] font-semibold uppercase tracking-[0.05em] text-[#666666] mb-1.5">
-                Organisation / Source (Optional)
+                {judgeMode ? "Local Workspace" : "Organisation / Source (Optional)"}
               </label>
-              <select
-                value={selectedOrg}
-                onChange={(e) => setSelectedOrg(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl border border-[#DADADA] bg-white text-[13.5px] text-[#090909] focus:outline-none focus:border-[#090909]"
-              >
-                {orgs.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.name}
-                  </option>
-                ))}
-              </select>
+              {judgeMode ? (
+                <div className="w-full px-3.5 py-2.5 rounded-xl border border-[#DADADA] bg-[#F4F4F2] text-[13.5px] font-medium text-[#090909]">
+                  Local Evaluation Workspace
+                </div>
+              ) : (
+                <select
+                  value={selectedOrg}
+                  onChange={(e) => setSelectedOrg(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#DADADA] bg-white text-[13.5px] text-[#090909] focus:outline-none focus:border-[#090909]"
+                >
+                  {orgs.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
           </div>
 

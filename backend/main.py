@@ -14,6 +14,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import sys
 import time
 import zipfile
@@ -837,13 +838,20 @@ async def upload_dataset(
     files: List[UploadFile] = File(...),
     user: Dict[str, Any] = Depends(require_user),
 ) -> Dict[str, Any]:
-    target_org = organisation_id or user.get("active_org_id")
+    target_org = (
+        user.get("active_org_id")
+        if (is_judge_mode() and user.get("judge_mode"))
+        else (organisation_id or user.get("active_org_id"))
+    )
     if not target_org:
         raise HTTPException(status_code=400, detail="No organisation specified")
     require_org_access(user, target_org, [ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER])
 
     if not files or not files[0].filename:
         raise HTTPException(status_code=400, detail="At least one file is required")
+
+    MAX_FILE_BYTES = 25 * 1024 * 1024
+    MAX_TOTAL_BYTES = 100 * 1024 * 1024
 
     dataset_id = f"ds-{int(time.time())}-{secrets.token_hex(4)}"
     ds_dir = DATASETS_DIR / dataset_id
@@ -853,20 +861,28 @@ async def upload_dataset(
     formats: set[str] = set()
     hasher = hashlib.sha256()
 
-    for f in files:
-        if not f.filename:
-            continue
-        ext = Path(f.filename).suffix.lower()
-        if ext not in ALLOWED_UPLOAD_EXTENSIONS:
-            raise HTTPException(status_code=400, detail=f"Unsupported file format: {ext or 'unknown'}")
-        safe_name = sanitize_filename(f.filename)
-        content = await f.read()
-        if len(content) == 0:
-            raise HTTPException(status_code=400, detail=f"Empty file is not allowed: {safe_name}")
-        (ds_dir / safe_name).write_bytes(content)
-        total_bytes += len(content)
-        formats.add(ext.lstrip(".").upper())
-        hasher.update(content)
+    try:
+        for f in files:
+            if not f.filename:
+                continue
+            ext = Path(f.filename).suffix.lower()
+            if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+                raise HTTPException(status_code=400, detail=f"This file format is not supported: {ext or 'unknown'}")
+            safe_name = sanitize_filename(f.filename)
+            content = await f.read()
+            if len(content) == 0:
+                raise HTTPException(status_code=400, detail=f"Empty file is not allowed: {safe_name}")
+            if len(content) > MAX_FILE_BYTES:
+                raise HTTPException(status_code=413, detail=f"File exceeds the 25 MB upload limit: {safe_name}")
+            total_bytes += len(content)
+            if total_bytes > MAX_TOTAL_BYTES:
+                raise HTTPException(status_code=413, detail="Total dataset upload exceeds the 100 MB limit.")
+            (ds_dir / safe_name).write_bytes(content)
+            formats.add(ext.lstrip(".").upper())
+            hasher.update(content)
+    except HTTPException:
+        shutil.rmtree(ds_dir, ignore_errors=True)
+        raise
 
     ds_name = (name or "").strip() or (files[0].filename if len(files) == 1 else f"Batch ({len(files)} files)")
     ds_sha256 = hasher.hexdigest()
