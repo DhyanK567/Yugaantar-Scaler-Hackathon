@@ -7,9 +7,12 @@ function getApiBase(): string {
       .medilockerDesktop;
     if (desktopBridge?.apiBase) return desktopBridge.apiBase;
     if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
-    return `http://${window.location.hostname}:8000`;
+    if (window.location.port === "3000" || window.location.port === "3001") {
+      return `http://${window.location.hostname}:8000`;
+    }
+    return "";
   }
-  return process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+  return process.env.NEXT_PUBLIC_API_URL || "";
 }
 
 const API_BASE = getApiBase();

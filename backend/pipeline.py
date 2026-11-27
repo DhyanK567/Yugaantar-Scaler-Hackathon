@@ -32,7 +32,10 @@ if str(STARTER_DIR) not in sys.path:
 from raksha_engine.attacker import RecordProfile, simulate_attacks  # type: ignore
 from raksha_engine.clinical_validator import analyze_clinical_drift, validate_fhir_r4_bundle  # type: ignore
 
-DATA_DIR = Path(os.environ.get("MEDILOCKER_DATA_DIR") or (REPO_ROOT / "data"))
+DATA_DIR = Path(
+    os.environ.get("MEDILOCKER_DATA_DIR")
+    or ("/tmp/medilocker_data" if os.environ.get("VERCEL") else str(REPO_ROOT / "data"))
+)
 JOBS_DIR = DATA_DIR / "jobs"
 DATASETS_DIR = DATA_DIR / "datasets"
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
