@@ -1,6 +1,6 @@
 """SQLite Database Layer & Migrations for MediLocker Platform.
-Stores only non-sensitive operational metadata, hashed credentials/OTPs, and assessment results.
-Never stores RAKSHA_SECRET, plaintext OTPs, or raw patient identifiers.
+Stores only non-sensitive operational metadata and assessment results.
+Never stores RAKSHA_SECRET or raw patient identifiers.
 """
 from __future__ import annotations
 
@@ -66,94 +66,6 @@ def init_db() -> None:
             )
         """)
 
-        # --- Users & RBAC Memberships ---
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id TEXT PRIMARY KEY,
-                email TEXT UNIQUE NOT NULL,
-                full_name TEXT NOT NULL,
-                status TEXT DEFAULT 'ACTIVE',
-                platform_role TEXT DEFAULT 'USER',
-                created_at REAL NOT NULL,
-                last_login_at REAL
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS memberships (
-                id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                organisation_id TEXT NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
-                role TEXT NOT NULL,
-                created_at REAL NOT NULL,
-                UNIQUE(user_id, organisation_id)
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_memberships_user ON memberships(user_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_memberships_org ON memberships(organisation_id)")
-
-        # --- Sessions ---
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS sessions (
-                id TEXT PRIMARY KEY,
-                token_hash TEXT UNIQUE NOT NULL,
-                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                active_org_id TEXT REFERENCES organisations(id) ON DELETE SET NULL,
-                expires_at REAL NOT NULL,
-                revoked_at REAL,
-                created_at REAL NOT NULL,
-                ip_address TEXT,
-                user_agent TEXT
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_hash)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)")
-
-        # --- Email OTP Challenges ---
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS otp_challenges (
-                id TEXT PRIMARY KEY,
-                email TEXT NOT NULL,
-                purpose TEXT NOT NULL DEFAULT 'login',
-                otp_hash TEXT NOT NULL,
-                attempts INTEGER DEFAULT 0,
-                max_attempts INTEGER DEFAULT 5,
-                expires_at REAL NOT NULL,
-                consumed_at REAL,
-                created_at REAL NOT NULL,
-                ip_address TEXT
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_otp_email_purpose ON otp_challenges(email, purpose, created_at)")
-
-        # --- Google OAuth Identities & States ---
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS oauth_identities (
-                id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                provider TEXT NOT NULL,
-                provider_sub TEXT NOT NULL,
-                email TEXT NOT NULL,
-                email_verified INTEGER NOT NULL DEFAULT 0,
-                created_at REAL NOT NULL,
-                UNIQUE(provider, provider_sub)
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_oauth_user ON oauth_identities(user_id)")
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS oauth_states (
-                state TEXT PRIMARY KEY,
-                nonce TEXT NOT NULL,
-                code_verifier TEXT NOT NULL,
-                redirect_uri TEXT NOT NULL,
-                link_user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
-                expires_at REAL NOT NULL,
-                created_at REAL NOT NULL
-            )
-        """)
-
         # --- Datasets ---
         conn.execute("""
             CREATE TABLE IF NOT EXISTS datasets (
@@ -167,7 +79,7 @@ def init_db() -> None:
                 sha256 TEXT,
                 storage_path TEXT,
                 status TEXT DEFAULT 'VALIDATED',
-                created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+                created_by TEXT,
                 created_at REAL NOT NULL,
                 deleted_at REAL
             )
@@ -295,7 +207,7 @@ def init_db() -> None:
                 blocked_count INTEGER NOT NULL DEFAULT 0,
                 total_count INTEGER NOT NULL DEFAULT 0,
                 results_json TEXT,
-                created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+                created_by TEXT,
                 created_at REAL NOT NULL
             )
         """)
@@ -310,7 +222,7 @@ def init_db() -> None:
                 manifest_hash TEXT NOT NULL,
                 signature_status TEXT NOT NULL DEFAULT 'UNSIGNED',
                 passport_json TEXT NOT NULL,
-                created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+                created_by TEXT,
                 created_at REAL NOT NULL,
                 verified_at REAL
             )
@@ -396,30 +308,4 @@ def init_db() -> None:
             conn.executemany(
                 "INSERT INTO organisations (id, name, org_type, region, status, records_contributed, joined_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 orgs,
-            )
-
-        # Seed default users + memberships if empty (no passwords; authenticate via Email OTP or Google)
-        cur = conn.execute("SELECT COUNT(*) as cnt FROM users")
-        if cur.fetchone()["cnt"] == 0:
-            now = time.time()
-            seed_users = [
-                ("usr-admin", "admin@medilocker.local", "Platform Administrator", "ACTIVE", "PLATFORM_ADMIN", now),
-                ("usr-privacy", "privacy@metrogeneral.org", "Dr. Priya Nair (Privacy Officer)", "ACTIVE", "USER", now),
-                ("usr-research", "research@nie.org", "Dr. Arjun Rao (Researcher)", "ACTIVE", "USER", now),
-                ("usr-auditor", "audit@medilocker.local", "Compliance Auditor", "ACTIVE", "USER", now),
-            ]
-            conn.executemany(
-                "INSERT INTO users (id, email, full_name, status, platform_role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                seed_users,
-            )
-            seed_memberships = [
-                ("mem-1", "usr-admin", "org-hosp-a", "ORG_ADMIN", now),
-                ("mem-2", "usr-admin", "org-hosp-b", "ORG_ADMIN", now),
-                ("mem-3", "usr-privacy", "org-hosp-a", "PRIVACY_OFFICER", now),
-                ("mem-4", "usr-research", "org-res-d", "RESEARCHER", now),
-                ("mem-5", "usr-auditor", "org-hosp-a", "AUDITOR", now),
-            ]
-            conn.executemany(
-                "INSERT INTO memberships (id, user_id, organisation_id, role, created_at) VALUES (?, ?, ?, ?, ?)",
-                seed_memberships,
             )

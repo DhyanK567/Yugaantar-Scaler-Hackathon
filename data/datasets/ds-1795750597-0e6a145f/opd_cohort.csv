@@ -1,0 +1,6 @@
+patient_name,age,gender,district,aadhaar,diagnosis,medication
+Amit Kumar,42,M,Jaipur,9876 5432 1098,Dengue Fever,Paracetamol 500mg
+Sunita Devi,43,F,Jaipur,8765 4321 0987,Typhoid,Azithromycin 500mg
+Ramesh Sharma,41,M,Jaipur,7654 3210 9876,Hypertension,Amlodipine 5mg
+Priya Verma,44,F,Jaipur,6543 2109 8765,Diabetes,Metformin 500mg
+Mohan Lal,40,M,Jaipur,5432 1098 7654,Asthma,Salbutamol 100mcg

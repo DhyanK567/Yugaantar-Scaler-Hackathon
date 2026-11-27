@@ -64,16 +64,12 @@ export default function ProtectDataPage() {
   const [runningAttack, setRunningAttack] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [confirmMappingOpen, setConfirmMappingOpen] = useState(false);
-  const [judgeMode, setJudgeMode] = useState(false);
+  const judgeMode = false;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    api
-      .authConfig()
-      .then((c) => setJudgeMode(Boolean(c.judge_mode)))
-      .catch(() => {});
     api
       .organisations()
       .then((list) => {

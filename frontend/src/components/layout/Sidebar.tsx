@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   LayoutDashboard,
   Database,
@@ -17,7 +17,6 @@ import {
   Share2,
   FileText,
   Settings,
-  LogOut,
   PanelLeftClose,
   PanelLeftOpen,
   X,
@@ -26,7 +25,6 @@ import {
   Sparkles,
   FileCheck2,
 } from "lucide-react";
-import { api, type AuthUser } from "@/lib/api";
 
 const PRIMARY_NAV = [
   { num: "01", label: "Overview", href: "/dashboard", icon: LayoutDashboard },
@@ -61,41 +59,9 @@ export default function Sidebar({
   onToggleCollapse,
 }: SidebarProps) {
   const pathname = usePathname();
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [offlineMode, setOfflineMode] = useState(false);
-  const [judgeMode, setJudgeMode] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(() =>
     ADVANCED_NAV.some((item) => pathname.startsWith(item.href))
   );
-
-  useEffect(() => {
-    api.me().then((res) => setUser(res.user)).catch(() => {});
-    api
-      .authConfig()
-      .then((c) => {
-        setOfflineMode(Boolean(c.offline_mode));
-        setJudgeMode(Boolean(c.judge_mode));
-      })
-      .catch(() => {});
-  }, []);
-
-  async function handleLogout() {
-    try {
-      await api.logout();
-    } catch {
-      // ignore
-    }
-    window.location.href = "/login";
-  }
-
-  async function handleOrgSwitch(orgId: string) {
-    try {
-      await api.switchOrg(orgId);
-      window.location.reload();
-    } catch {
-      // ignore
-    }
-  }
 
   const sidebarContent = (
     <div className="flex flex-col h-full bg-white border-r border-[#DADADA]">
@@ -139,37 +105,15 @@ export default function Sidebar({
         )}
       </div>
 
-      {/* Organisation Selector (Organisation Mode) or Local Workspace Label (Judge Mode) */}
-      {!collapsed && judgeMode && (
+      {/* Local Workspace Label */}
+      {!collapsed && (
         <div className="px-4 py-3 border-b border-[#E5E5E5] shrink-0">
           <div className="text-[10px] font-semibold tracking-[0.08em] uppercase text-[#888888] mb-1">
             Local Workspace
           </div>
           <div className="px-2.5 py-1.5 text-[12.5px] font-medium text-[#090909] bg-[#F4F4F2] border border-[#DADADA] rounded-lg">
-            Local Evaluation Workspace
+            MediLocker Privacy Firewall
           </div>
-        </div>
-      )}
-      {!collapsed && !judgeMode && user && user.memberships.length > 0 && (
-        <div className="px-4 py-3 border-b border-[#E5E5E5] shrink-0">
-          <label
-            htmlFor="sidebar-org-select"
-            className="block text-[10px] font-semibold tracking-[0.08em] uppercase text-[#888888] mb-1.5"
-          >
-            Active Organisation
-          </label>
-          <select
-            id="sidebar-org-select"
-            value={user.active_org_id || ""}
-            onChange={(e) => handleOrgSwitch(e.target.value)}
-            className="w-full px-2.5 py-1.5 text-[12.5px] font-medium text-[#090909] bg-[#F4F4F2] border border-[#DADADA] rounded-lg focus:outline-none focus:border-[#090909]"
-          >
-            {user.memberships.map((m) => (
-              <option key={m.organisation_id} value={m.organisation_id}>
-                {m.organisation_name} ({m.role})
-              </option>
-            ))}
-          </select>
         </div>
       )}
 
@@ -251,48 +195,20 @@ export default function Sidebar({
         </div>
       </nav>
 
-      {/* Bottom Identity, Offline Status & Sign Out */}
+      {/* Bottom Local Engine Status */}
       <div className="px-3 py-3.5 border-t border-[#E5E5E5] shrink-0 space-y-2">
         {!collapsed && (
           <div className="px-3 py-2 rounded-lg bg-[#F4F4F2] border border-[#E5E5E5]">
-            {judgeMode ? (
-              <>
-                <div className="text-[12px] font-semibold text-[#090909] truncate">
-                  Local Evaluator
-                </div>
-                <div className="text-[11px] text-[#666666] truncate">
-                  LOCAL EVALUATION MODE
-                </div>
-              </>
-            ) : (
-              user && (
-                <>
-                  <div className="text-[12px] font-semibold text-[#090909] truncate">
-                    {user.full_name}
-                  </div>
-                  <div className="text-[11px] text-[#666666] truncate">
-                    {user.active_role || user.platform_role}
-                  </div>
-                </>
-              )
-            )}
+            <div className="text-[12px] font-semibold text-[#090909] truncate">
+              Local Workspace
+            </div>
+            <div className="text-[11px] text-[#666666] truncate">
+              Direct Dashboard Access
+            </div>
             <div className="text-[10.5px] text-[#888888] mt-1">
-              {offlineMode ? "Offline Loopback · CPU-only" : "Local Engine · CPU-only"}
+              Offline Engine · CPU-only
             </div>
           </div>
-        )}
-
-        {!judgeMode && (
-          <button
-            type="button"
-            onClick={handleLogout}
-            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-[#666666] hover:bg-[#F4F4F2] hover:text-[#090909] transition-colors ${
-              collapsed ? "justify-center px-2" : ""
-            }`}
-          >
-            <LogOut size={15} strokeWidth={1.6} className="shrink-0" />
-            {!collapsed && <span>Sign out</span>}
-          </button>
         )}
       </div>
     </div>

@@ -4,13 +4,19 @@ import { useEffect, useState } from "react";
 import { api, type IdentityGraph } from "@/lib/api";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState, ErrorState } from "@/components/ui/StatePanels";
+import { IdentityContinuityChart } from "@/components/charts/IdentityContinuityChart";
 
 export default function IdentityContinuityPage() {
   const [graph, setGraph] = useState<IdentityGraph | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api.identityGraph().then(setGraph).catch((e) => setError(e.message));
+    api
+      .identityGraph()
+      .then(setGraph)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
   }, []);
 
   const measured = graph?.status === "MEASURED";
@@ -48,6 +54,11 @@ export default function IdentityContinuityPage() {
           </div>
         ))}
       </div>
+
+      <IdentityContinuityChart
+        graph={graph}
+        loading={loading}
+      />
 
       {!graph || (graph.nodes.length === 0 && graph.edges.length === 0) ? (
         <EmptyState

@@ -14,14 +14,13 @@ export default function DatasetsPage() {
   const [activeJob, setActiveJob] = useState<JobRecord | null>(null);
   const [uploading, setUploading] = useState(false);
   const [downloadingReportJobId, setDownloadingReportJobId] = useState<string | null>(null);
-  const [judgeMode, setJudgeMode] = useState(false);
+  const judgeMode = false;
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   function loadAll() {
     api.datasets().then(setDatasets).catch((e) => setError(e.message));
-    api.authConfig().then((c) => setJudgeMode(Boolean(c.judge_mode))).catch(() => {});
     api
       .organisations()
       .then((list) => {

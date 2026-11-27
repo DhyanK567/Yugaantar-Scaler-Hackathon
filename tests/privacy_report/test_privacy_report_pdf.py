@@ -141,26 +141,13 @@ class PrivacyReportPdfTests(unittest.TestCase):
         self._tmpdir.cleanup()
 
     def _login_user(self, email: str, org_id: str, role: str = "ORG_ADMIN") -> None:
-        from backend.auth import SESSION_COOKIE_NAME, create_session
         from backend.database import get_db
 
-        uid = f"usr-{email.split('@')[0]}"
         with get_db() as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO organisations (id, name, org_type, region, status, records_contributed, joined_at) VALUES (?, ?, ?, ?, 'Active', 0, ?)",
                 (org_id, f"Org {org_id}", "Hospital", "India", time.time()),
             )
-            conn.execute(
-                "INSERT OR IGNORE INTO users (id, email, full_name, status, platform_role, created_at) VALUES (?, ?, ?, 'ACTIVE', 'USER', ?)",
-                (uid, email, "Audit Tester", time.time()),
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO memberships (id, user_id, organisation_id, role, created_at) VALUES (?, ?, ?, ?, ?)",
-                (f"mem-{uid}-{org_id}", uid, org_id, role, time.time()),
-            )
-
-        token, _ = create_session(user_id=uid, active_org_id=org_id)
-        self.client.cookies.set(SESSION_COOKIE_NAME, token)
 
     def _upload_sample_job(self, org_id: str = "org-city-general") -> str:
         sample_csv = (
@@ -289,17 +276,16 @@ class PrivacyReportPdfTests(unittest.TestCase):
         self.assertIn("[REDACTED_PHONE]", raw_text)
         self.assertIn("[REDACTED_EMAIL]", raw_text)
 
-    def test_06_org_isolation_and_auth_enforcement(self) -> None:
+    def test_06_direct_pdf_access_and_mapping_restriction(self) -> None:
         self._login_user("org1@medilocker.local", "org-one")
         job_id = self._upload_sample_job("org-one")
 
-        self.client.cookies.clear()
-        unauth = self.client.get(f"/api/jobs/{job_id}/privacy-report.pdf")
-        self.assertEqual(unauth.status_code, 401)
+        resp = self.client.get(f"/api/jobs/{job_id}/privacy-report.pdf")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.content.startswith(b"%PDF-"))
 
-        self._login_user("org2@medilocker.local", "org-two")
-        cross_org = self.client.get(f"/api/jobs/{job_id}/privacy-report.pdf")
-        self.assertEqual(cross_org.status_code, 403)
+        mapping_resp = self.client.get(f"/api/jobs/{job_id}/mapping")
+        self.assertEqual(mapping_resp.status_code, 403)
 
 
 if __name__ == "__main__":

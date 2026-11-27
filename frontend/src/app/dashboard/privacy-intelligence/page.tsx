@@ -5,6 +5,8 @@ import { api, type PrivacyIntelligence } from "@/lib/api";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState, ErrorState } from "@/components/ui/StatePanels";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { PIICategoryChart } from "@/components/charts/PIICategoryChart";
+import { RiskDistributionChart } from "@/components/charts/RiskDistributionChart";
 import { RefreshCw, ShieldCheck, Activity, Swords, ArrowRightLeft, CheckCircle2 } from "lucide-react";
 
 function fmtPct(val?: number | null): string {
@@ -144,6 +146,22 @@ export default function PrivacyIntelligencePage() {
           </div>
         </div>
       </div>
+
+      {/* Graphical Privacy & Risk Analytics */}
+      <PIICategoryChart
+        fieldTierCounts={intel?.field_tier_counts}
+        totalDetected={intel?.before_after?.before_pii_detected ?? intel?.total_pii_detected ?? 0}
+        loading={loading}
+        lastUpdated={intel?.last_updated}
+      />
+
+      <RiskDistributionChart
+        riskMap={intel?.risk_map}
+        beforeAfter={ba}
+        attackOverview={ao}
+        loading={loading}
+        lastUpdated={intel?.last_updated}
+      />
 
       {/* Dataset Release Readiness & Privacy Before vs After */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
