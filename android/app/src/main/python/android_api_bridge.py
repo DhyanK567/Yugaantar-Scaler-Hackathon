@@ -18,6 +18,8 @@ import sqlite3
 import sys
 import time
 import zipfile
+from email.parser import BytesParser
+from email.policy import default as email_default_policy
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs
@@ -505,6 +507,74 @@ def handle_request(method: str, path: str, query_string: str, headers_json: str,
         with _get_db() as conn:
             return resp(200, [dict(r) for r in conn.execute("SELECT * FROM datasets WHERE organisation_id = ? ORDER BY created_at DESC", (org_id,)).fetchall()])
 
+    if path == "/api/datasets" and method == "POST":
+        ct_hdr = ""
+        for hk, hv in headers.items():
+            if hk.lower() == "content-type":
+                ct_hdr = hv
+                break
+        if "multipart/form-data" not in ct_hdr.lower():
+            return resp(400, {"detail": "Expected multipart/form-data upload"})
+        msg = BytesParser(policy=email_default_policy).parsebytes(
+            b"Content-Type: " + ct_hdr.encode("latin-1") + b"\r\n\r\n" + body
+        )
+        form_fields: Dict[str, str] = {}
+        uploaded_files: List[Tuple[str, bytes]] = []
+        allowed_exts = {".csv", ".json", ".jsonl", ".txt", ".xml", ".ndjson"}
+        for part in msg.iter_parts():
+            cd = part.get("Content-Disposition", "")
+            field_name = part.get_param("name", header="Content-Disposition")
+            filename = part.get_filename()
+            payload_bytes = part.get_payload(decode=True) or b""
+            if filename:
+                ext = Path(filename).suffix.lower()
+                if ext not in allowed_exts:
+                    return resp(400, {"detail": f"Unsupported file format: {ext or 'unknown'}"})
+                if len(payload_bytes) == 0:
+                    return resp(400, {"detail": f"Empty file is not allowed: {filename}"})
+                safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(filename).name) or f"upload_{len(uploaded_files)}.csv"
+                uploaded_files.append((safe_name, payload_bytes))
+            elif field_name:
+                form_fields[field_name] = payload_bytes.decode("utf-8", errors="replace")
+
+        if not uploaded_files:
+            return resp(400, {"detail": "At least one file is required"})
+
+        target_org = form_fields.get("organisation_id") or org_id
+        ds_id = f"ds-{int(time.time())}-{secrets.token_hex(4)}"
+        ds_dir = _APP_DIR / "datasets" / ds_id
+        ds_dir.mkdir(parents=True, exist_ok=True)
+        total_bytes = 0
+        for safe_name, content in uploaded_files:
+            (ds_dir / safe_name).write_bytes(content)
+            total_bytes += len(content)
+
+        ds_name = (form_fields.get("name") or "").strip() or (
+            uploaded_files[0][0] if len(uploaded_files) == 1 else f"Batch ({len(uploaded_files)} files)"
+        )
+        with _get_db() as conn:
+            conn.execute(
+                "INSERT INTO datasets (id, organisation_id, name, status, files_count, total_bytes, storage_path, created_by, created_at) VALUES (?, ?, ?, 'VALIDATED', ?, ?, ?, ?, ?)",
+                (ds_id, target_org, ds_name, len(uploaded_files), total_bytes, str(ds_dir), user["id"], time.time()),
+            )
+        _audit("DATASET_UPLOADED", "dataset", ds_id, "SUCCESS", f"Uploaded {len(uploaded_files)} file(s), {total_bytes} bytes", user, target_org)
+
+        auto_proc = form_fields.get("auto_process", "true").lower() not in ("false", "0", "no")
+        job = _run_privacy_job(ds_id, target_org, ds_dir, ds_name, user) if auto_proc else None
+        return resp(200, {"dataset_id": ds_id, "job": job})
+
+    if path.startswith("/api/datasets/") and path != "/api/datasets/process-sample" and method == "DELETE":
+        ds_id = path.split("/")[3]
+        with _get_db() as conn:
+            row = conn.execute("SELECT * FROM datasets WHERE id = ? AND organisation_id = ?", (ds_id, org_id)).fetchone()
+            if not row:
+                return resp(404, {"detail": "Dataset not found"})
+            conn.execute("DELETE FROM datasets WHERE id = ?", (ds_id,))
+        ds_path = Path(row["storage_path"])
+        if ds_path.exists() and ds_path.is_dir():
+            shutil.rmtree(ds_path, ignore_errors=True)
+        return resp(200, {"status": "deleted"})
+
     if path == "/api/datasets/process-sample" and method == "POST":
         # Built-in synthetic offline sample trigger for Android verification
         ds_id = f"ds-{secrets.token_hex(5)}"
@@ -528,6 +598,41 @@ def handle_request(method: str, path: str, query_string: str, headers_json: str,
         with _get_db() as conn:
             return resp(200, [dict(r) for r in conn.execute("SELECT * FROM jobs WHERE organisation_id = ? ORDER BY created_at DESC", (org_id,)).fetchall()])
 
+    if path == "/api/jobs" and method == "POST":
+        payload = json.loads(body.decode("utf-8")) if body else {}
+        ds_id = payload.get("dataset_id")
+        with _get_db() as conn:
+            ds = conn.execute("SELECT * FROM datasets WHERE id = ? AND organisation_id = ?", (ds_id, org_id)).fetchone()
+        if not ds:
+            return resp(404, {"detail": "Dataset not found"})
+        job = _run_privacy_job(ds_id, org_id, Path(ds["storage_path"]), ds["name"], user)
+        return resp(200, job)
+
+    if path.startswith("/api/jobs/") and path.endswith("/download") and method == "GET":
+        jid = path.split("/")[3]
+        job_out = _APP_DIR / "jobs" / jid / "output"
+        if not job_out.exists():
+            return resp(404, {"detail": "Job output not found"})
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for fp in job_out.rglob("*"):
+                if fp.is_file():
+                    zf.write(fp, fp.relative_to(job_out))
+        return {
+            "status": 200,
+            "content_type": "application/zip",
+            "headers": {"Content-Disposition": f'attachment; filename="{jid}_sanitized.zip"'},
+            "body_b64": base64.b64encode(buf.getvalue()).decode("ascii"),
+        }
+
+    if path.startswith("/api/jobs/") and method == "GET":
+        jid = path.split("/")[3]
+        with _get_db() as conn:
+            row = conn.execute("SELECT * FROM jobs WHERE id = ? AND organisation_id = ?", (jid, org_id)).fetchone()
+        if not row:
+            return resp(404, {"detail": "Job not found"})
+        return resp(200, dict(row))
+
     if path == "/api/privacy-intelligence":
         with _get_db() as conn:
             rows = [dict(r) for r in conn.execute("SELECT * FROM privacy_assessments WHERE organisation_id = ? ORDER BY created_at DESC", (org_id,)).fetchall()]
@@ -537,7 +642,7 @@ def handle_request(method: str, path: str, query_string: str, headers_json: str,
         rmap = json.loads(latest.get("details_json") or "{}").get("risk_map")
         return resp(200, {"status": "MEASURED", "assessments_count": len(rows), "total_pii_detected": sum(r["pii_detected"] for r in rows), "total_residual_leakage": sum(r["residual_leakage"] for r in rows), "canary_status": latest["canary_status"], "reid_risk_level": latest["reid_risk_level"], "risk_map": rmap, "assessments": rows})
 
-    if path == "/api/clinical-reports":
+    if path in ("/api/clinical-reports", "/api/clinical/reports"):
         with _get_db() as conn:
             return resp(200, [dict(r) for r in conn.execute("SELECT * FROM clinical_reports WHERE organisation_id = ? ORDER BY created_at DESC", (org_id,)).fetchall()])
 
@@ -555,11 +660,11 @@ def handle_request(method: str, path: str, query_string: str, headers_json: str,
         vres = verify_passport_bundle(job_out / "privacy_passport.json", job_out, manifest_path=job_out / "dataset_manifest.json")
         return resp(200, {"passport_id": pid, "integrity_valid": bool(vres.get("valid")), "signature_status": row["signature_status"], "manifest_hash": row["manifest_hash"], "details": vres.get("details", [])})
 
-    if path == "/api/audit":
+    if path in ("/api/audit", "/api/audit/events"):
         with _get_db() as conn:
             return resp(200, [dict(r) for r in conn.execute("SELECT * FROM audit_events ORDER BY timestamp DESC LIMIT 50").fetchall()])
 
-    if path == "/api/research-requests":
+    if path in ("/api/research-requests", "/api/research/requests"):
         with _get_db() as conn:
             return resp(200, [dict(r) for r in conn.execute("SELECT * FROM research_requests ORDER BY created_at DESC").fetchall()])
 
