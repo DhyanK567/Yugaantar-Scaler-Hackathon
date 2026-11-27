@@ -14,12 +14,14 @@ export default function DatasetsPage() {
   const [activeJob, setActiveJob] = useState<JobRecord | null>(null);
   const [uploading, setUploading] = useState(false);
   const [downloadingReportJobId, setDownloadingReportJobId] = useState<string | null>(null);
+  const [judgeMode, setJudgeMode] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   function loadAll() {
     api.datasets().then(setDatasets).catch((e) => setError(e.message));
+    api.authConfig().then((c) => setJudgeMode(Boolean(c.judge_mode))).catch(() => {});
     api
       .organisations()
       .then((list) => {
@@ -112,7 +114,11 @@ export default function DatasetsPage() {
         title="Datasets"
         subtitle="Upload synthetic healthcare datasets to initiate the offline deterministic privacy pipeline."
         actions={
-          orgs.length > 0 ? (
+          judgeMode ? (
+            <div className="px-3 py-2 rounded-lg bg-white border border-[#DADADA] text-[12.5px] font-medium text-[#090909]">
+              Local Evaluation Workspace
+            </div>
+          ) : orgs.length > 0 ? (
             <select
               value={selectedOrg}
               onChange={(e) => setSelectedOrg(e.target.value)}
