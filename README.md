@@ -48,11 +48,11 @@ See [docs/VERIFICATION_GUIDE.md](docs/VERIFICATION_GUIDE.md) for detailed stage 
 ## 1. Problem Statement & Approach
 
 ### The Problem
-- **Sensitive Identifiers:** Clinical exports contain direct identifiers (patient names, relative names, phone numbers, Aadhaar, ABHA, PAN, MRN/UHID, emails, addresses) across structured columns, free-text notes, filenames, JSON keys, metadata paths, and base64 payloads.
-- **Cross-Hospital Fragmentation:** Multiple hospitals and diagnostic labs store fragmented records for the same patient in different scripts (English, Hindi/Devanagari, Hinglish transliterations) and local registration IDs.
-- **Quasi-Identifier Exposure:** Combinations of exact dates, ages, villages, and PIN codes allow linkage and singling-out attacks even after direct names are removed.
-- **Clinical Utility Loss:** Naive redaction destroys medical eponyms (*Parkinson's*, *Addison's*, *Crohn's*), doctor titles (`Dr. Sharma`), drug dosages (`650mg`), lab units (`mg/dL`), and FHIR R4 structural references.
-- **Lack of Pre-Release Verification:** Organisations need measurable privacy, clinical integrity, and adversarial attack evidence before releasing a dataset.
+- **Sensitive Identifiers:** Clinical exports contain direct identifiers (patient names, relative names, phone numbers, Aadhaar, ABHA, PAN, MRN/UHID, emails, and addresses) across structured columns, free-text notes, filenames, JSON keys, metadata paths, and base64 payloads.
+- **Cross-Hospital Fragmentation:** Multiple hospitals and diagnostic labs store fragmented records for the same patient in different scripts (English, Hindi/Devanagari, and Hinglish transliterations) and local registration IDs.
+- **Quasi-Identifier Exposure:** Combinations of exact dates, ages, villages, and PIN codes allow linkage and singling-out attacks even after direct identifiers are removed.
+- **Clinical Utility Loss:** Naive redaction destroys medical eponyms (*Parkinson's*, *Addison's*, *Crohn's*), doctor titles (e.g. `Dr. Sharma`), drug dosages (`650mg`), lab units (`mg/dL`), and FHIR R4 structural references.
+- **Lack of Pre-Release Verification:** Organisations need measurable privacy, clinical integrity, and adversarial-attack evidence before releasing a dataset.
 
 ### MediLocker's Approach
 MediLocker pairs a **standalone, zero-dependency Python privacy engine (`starter/`)** with an **integrated local FastAPI + SQLite + Next.js platform (`backend/`, `frontend/`, `launcher/`)**:
@@ -174,7 +174,7 @@ Full module-by-module capabilities and limitations are documented in [`docs/FEAT
 
 - **CPU-Only & Air-Gapped Engine:** `starter/main.py` uses zero GPUs, zero LLMs, zero pretrained transformers, and zero runtime network calls (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`).
 - **Decoupled Authentication:** Web authentication (SMTP Email OTP and Google OAuth 2.0) lives strictly in `backend/auth.py` and is never imported or required by `starter/main.py` or `validate_output.py`.
-- **Offline Local Demo Mode:** Launching via `launcher/medilocker_launcher.py` or `Start-MediLocker.bat` sets `MEDILOCKER_OFFLINE_MODE=true` and binds strictly to `127.0.0.1` (`8000` & `3001`), enabling full console operation with zero internet.
+- **Offline Local Demo Mode:** Launching via `launcher/medilocker_launcher.py` or `Start-MediLocker.bat` sets `MEDILOCKER_OFFLINE_MODE=true` and binds strictly to `127.0.0.1` (`8000` & `3001`), enabling full console operation with no internet connection.
 - **Secret-Dependent Pseudonymisation:** `RAKSHA_SECRET` is read from the environment for `HMAC-SHA256` pseudonyms and date shifts; different secrets produce mutually unlinkable pseudonym spaces.
 - **Synthetic Data Only:** `dev/input/` and all test corpora contain synthetic records only.
 
