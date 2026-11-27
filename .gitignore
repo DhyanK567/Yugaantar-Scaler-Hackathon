@@ -34,3 +34,11 @@ desktop/py_dist/
 desktop/py_build/
 desktop/web_dist/
 desktop/node_runtime/
+
+# Android
+android/.gradle/
+android/local.properties
+android/app/build/
+android/build/
+*.jks
+*.keystore

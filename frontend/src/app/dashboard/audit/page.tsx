@@ -25,7 +25,11 @@ export default function AuditPage() {
   }
 
   useEffect(() => {
-    load(page);
+    const id = setTimeout(() => {
+      load(page);
+    }, 0);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
 
   return (

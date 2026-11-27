@@ -12,7 +12,7 @@ function GoogleCallbackInner() {
     const code = params.get("code");
     const state = params.get("state");
     if (!code || !state) {
-      setError("Missing OAuth code or state parameter.");
+      Promise.resolve().then(() => setError("Missing OAuth code or state parameter."));
       return;
     }
     api

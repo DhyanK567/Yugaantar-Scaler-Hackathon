@@ -42,7 +42,10 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    loadDashboard(false);
+    const id = setTimeout(() => {
+      void loadDashboard(false);
+    }, 0);
+    return () => clearTimeout(id);
   }, [loadDashboard]);
 
   if (unauth) {

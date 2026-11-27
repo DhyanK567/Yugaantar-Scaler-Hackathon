@@ -1,0 +1,3 @@
+-keep class org.medilocker.privacy.** { *; }
+-keep class com.chaquo.python.** { *; }
+-dontwarn com.chaquo.python.**
