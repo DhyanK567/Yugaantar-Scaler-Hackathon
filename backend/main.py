@@ -65,8 +65,10 @@ from .auth import (
     dev_email_login,
     get_google_config,
     get_smtp_config,
+    get_operating_mode,
     handle_google_callback,
     is_dev_email_login_enabled,
+    is_judge_mode,
     is_offline_mode_enabled,
     offline_demo_login,
     request_email_otp,
@@ -228,6 +230,8 @@ def get_auth_config() -> Dict[str, Any]:
     smtp = get_smtp_config()
     google = get_google_config()
     return {
+        "mode": get_operating_mode(),
+        "judge_mode": is_judge_mode(),
         "offline_mode": is_offline_mode_enabled(),
         "smtp_enabled": smtp["configured"],
         "dev_email_login_enabled": is_dev_email_login_enabled(),
@@ -1181,6 +1185,11 @@ def download_job_outputs(
     job = get_job_detail(job_id, user)
     if job.get("organisation_id"):
         if include_mapping:
+            if is_judge_mode():
+                raise HTTPException(
+                    status_code=403,
+                    detail="Restricted patient mapping file download is disabled in Local Evaluation Mode.",
+                )
             require_org_access(
                 user,
                 job["organisation_id"],
@@ -1254,6 +1263,11 @@ def download_job_mapping_jsonl(
     job_id: str, request: Request, user: Dict[str, Any] = Depends(require_user)
 ):
     """Restricted download of sensitive records.jsonl patient mapping file."""
+    if is_judge_mode():
+        raise HTTPException(
+            status_code=403,
+            detail="Restricted patient mapping file download is disabled in Local Evaluation Mode.",
+        )
     job = get_job_detail(job_id, user)
     if job.get("organisation_id"):
         require_org_access(

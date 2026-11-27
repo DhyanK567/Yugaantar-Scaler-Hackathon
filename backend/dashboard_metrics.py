@@ -78,6 +78,8 @@ def _extract_identity_for_job(conn: sqlite3.Connection, job_id: str) -> Dict[str
             "true_positives": 0,
             "false_positives": 0,
             "precision": None,
+            "recall": None,
+            "f05": None,
             "false_merges": 0,
             "records_assessed": 0,
             "scope": "JOB",
@@ -112,6 +114,8 @@ def _extract_identity_for_job(conn: sqlite3.Connection, job_id: str) -> Dict[str
             "true_positives": 0,
             "false_positives": 0,
             "precision": None,
+            "recall": None,
+            "f05": None,
             "false_merges": false_merges,
             "records_assessed": total_patients,
             "scope": "JOB",
@@ -123,6 +127,8 @@ def _extract_identity_for_job(conn: sqlite3.Connection, job_id: str) -> Dict[str
         "true_positives": tp,
         "false_positives": fp,
         "precision": computed_precision,
+        "recall": round(float(data["recall"]), 4) if data.get("recall") is not None else None,
+        "f05": round(float(data["f05"]), 4) if data.get("f05") is not None else None,
         "false_merges": false_merges,
         "records_assessed": total_patients,
         "scope": "JOB",
@@ -192,6 +198,118 @@ def build_job_dashboard_metrics(conn: sqlite3.Connection, job_row: Dict[str, Any
         if clinical["status"] == "MEASURED":
             clinical["status"] = "FAILED"
 
+    # Card 1: Files protected (only successfully sanitised files on completed jobs)
+    is_completed_ok = job_status in ("COMPLETED", "COMPLETED_WITH_WARNINGS")
+    files_sanitized = int(job_row.get("files_sanitized") or 0) if is_completed_ok else None
+    files_protected = {
+        "status": "MEASURED" if is_completed_ok else "NOT_MEASURED",
+        "count": files_sanitized,
+        "files_total": int(job_row.get("files_total") or 0),
+        "files_quarantined": int(job_row.get("files_quarantined") or 0),
+    }
+
+    # Card 2: Identifiers protected (confirmed transformed, never counting unconfirmed or leaked)
+    pa_dict = dict(pa_row) if pa_row else {}
+    cr_dict = dict(cr_row) if cr_row else {}
+    if pa_row and job_status != "FAILED" and "pii_detected" in pa_dict:
+        detected_id = int(pa_dict.get("pii_detected") or 0)
+        remaining_leaks = int(pa_dict.get("residual_leakage") or 0)
+        transformed_id = max(0, detected_id - remaining_leaks) if is_completed_ok else 0
+        identifiers_protected = {
+            "status": "MEASURED" if is_completed_ok else "NOT_MEASURED",
+            "detected": detected_id,
+            "transformed": transformed_id if is_completed_ok else None,
+            "unresolved": remaining_leaks,
+            "remaining_leaks": remaining_leaks,
+        }
+    else:
+        identifiers_protected = {
+            "status": "NOT_MEASURED",
+            "detected": 0,
+            "transformed": None,
+            "unresolved": 0,
+            "remaining_leaks": None,
+        }
+
+    # Card 4: Privacy tests passed (actual executed checks only)
+    try:
+        atk_row = conn.execute(
+            "SELECT blocked_count, total_count FROM attack_runs WHERE job_id = ? ORDER BY created_at DESC LIMIT 1",
+            (job_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        atk_row = None
+    try:
+        psp_row = conn.execute(
+            "SELECT id, manifest_hash FROM passports WHERE job_id = ? ORDER BY created_at DESC LIMIT 1",
+            (job_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        psp_row = None
+
+    passed_c = 0
+    failed_c = 0
+    not_run_c = 0
+    inconclusive_c = 0
+    blocked_c = 0
+
+    if pa_row and "residual_leakage" in pa_dict:
+        if int(pa_dict.get("residual_leakage") or 0) == 0:
+            passed_c += 1
+        else:
+            failed_c += 1
+    else:
+        not_run_c += 1
+
+    if pa_row and int(pa_dict.get("canary_planted") or 0) > 0:
+        if int(pa_dict.get("canary_leaks") or 0) == 0:
+            passed_c += 1
+        else:
+            failed_c += 1
+    else:
+        not_run_c += 1
+
+    if cr_row:
+        if str(cr_dict.get("fhir_integrity") or "").upper() == "FAILED" or int(cr_dict.get("modified_values") or 0) > 0:
+            failed_c += 1
+        else:
+            passed_c += 1
+    else:
+        not_run_c += 1
+
+    if atk_row and int(atk_row["total_count"] or 0) > 0:
+        if int(atk_row["blocked_count"] or 0) == int(atk_row["total_count"] or 0):
+            passed_c += 1
+        else:
+            failed_c += 1
+    else:
+        not_run_c += 1
+
+    if psp_row and psp_row["manifest_hash"]:
+        if str(job_row.get("release_decision") or "").upper() == "BLOCKED":
+            blocked_c += 1
+        else:
+            passed_c += 1
+    else:
+        not_run_c += 1
+
+    total_exec = passed_c + failed_c + inconclusive_c + blocked_c
+    privacy_tests = {
+        "status": "BLOCKED" if blocked_c > 0 else ("MEASURED" if total_exec > 0 else "NOT_TESTED"),
+        "passed": passed_c,
+        "failed": failed_c,
+        "not_run": not_run_c,
+        "inconclusive": inconclusive_c,
+        "blocked": blocked_c,
+        "total_executed": total_exec,
+    }
+
+    operations = {
+        "records_processed": int(job_row.get("records_processed") or 0),
+        "duration_secs": job_row.get("duration_secs"),
+        "fhir_integrity": str(cr_dict["fhir_integrity"]) if cr_dict.get("fhir_integrity") else "NOT_MEASURED",
+    }
+
     return {
         "scope": "JOB",
         "job_id": job_id,
@@ -202,6 +320,10 @@ def build_job_dashboard_metrics(conn: sqlite3.Connection, job_row: Dict[str, Any
         "release_decision": job_row.get("release_decision") or "PENDING",
         "processed_at": job_row.get("completed_at") or job_row.get("created_at"),
         "metrics": {
+            "files_protected": files_protected,
+            "identifiers_protected": identifiers_protected,
+            "privacy_tests": privacy_tests,
+            "operations": operations,
             "canary": canary,
             "identity": identity,
             "clinical": clinical,
@@ -225,8 +347,12 @@ def build_aggregate_dashboard_metrics(
             "processed_at": None,
             "jobs_included": 0,
             "metrics": {
+                "files_protected": {"status": "NOT_MEASURED", "count": None, "files_total": 0, "files_quarantined": 0},
+                "identifiers_protected": {"status": "NOT_MEASURED", "detected": 0, "transformed": None, "unresolved": 0, "remaining_leaks": None},
+                "privacy_tests": {"status": "NOT_TESTED", "passed": 0, "failed": 0, "not_run": 5, "inconclusive": 0, "blocked": 0, "total_executed": 0},
+                "operations": {"records_processed": 0, "duration_secs": None, "fhir_integrity": "NOT_MEASURED"},
                 "canary": {"status": "NOT_TESTED", "leaked": None, "planted": 0, "files_assessed": 0, "outcome": "NOT_TESTED"},
-                "identity": {"status": "NOT_MEASURED", "true_positives": 0, "false_positives": 0, "precision": None, "false_merges": 0, "records_assessed": 0, "scope": "AGGREGATE"},
+                "identity": {"status": "NOT_MEASURED", "true_positives": 0, "false_positives": 0, "precision": None, "recall": None, "f05": None, "false_merges": 0, "records_assessed": 0, "scope": "AGGREGATE"},
                 "clinical": {"status": "NOT_MEASURED", "expected": 0, "preserved": 0, "missing": 0, "modified": 0, "preservation_percentage": None},
                 "execution": get_runtime_execution_compliance(),
             },
@@ -249,8 +375,59 @@ def build_aggregate_dashboard_metrics(
     clin_mod = 0
     clin_measured_jobs = 0
 
+    files_san_agg = 0
+    files_tot_agg = 0
+    files_quar_agg = 0
+    files_ok_jobs = 0
+
+    id_det_agg = 0
+    id_trans_agg = 0
+    id_unres_agg = 0
+    id_leaks_agg = 0
+    id_prot_jobs = 0
+
+    pt_passed = 0
+    pt_failed = 0
+    pt_not_run = 0
+    pt_inc = 0
+    pt_blocked = 0
+    pt_exec = 0
+
+    recs_agg = 0
+    dur_agg = 0.0
+    dur_count = 0
+
     for j in completed_jobs:
         m = build_job_dashboard_metrics(conn, j)["metrics"]
+        fp_m = m["files_protected"]
+        if fp_m["status"] == "MEASURED" and fp_m["count"] is not None:
+            files_san_agg += int(fp_m["count"])
+            files_ok_jobs += 1
+        files_tot_agg += int(fp_m["files_total"] or 0)
+        files_quar_agg += int(fp_m["files_quarantined"] or 0)
+
+        ip_m = m["identifiers_protected"]
+        if ip_m["status"] == "MEASURED" and ip_m["transformed"] is not None:
+            id_det_agg += int(ip_m["detected"] or 0)
+            id_trans_agg += int(ip_m["transformed"] or 0)
+            id_unres_agg += int(ip_m["unresolved"] or 0)
+            id_leaks_agg += int(ip_m["remaining_leaks"] or 0)
+            id_prot_jobs += 1
+
+        pt_m = m["privacy_tests"]
+        pt_passed += int(pt_m["passed"] or 0)
+        pt_failed += int(pt_m["failed"] or 0)
+        pt_not_run += int(pt_m["not_run"] or 0)
+        pt_inc += int(pt_m["inconclusive"] or 0)
+        pt_blocked += int(pt_m["blocked"] or 0)
+        pt_exec += int(pt_m["total_executed"] or 0)
+
+        op_m = m["operations"]
+        recs_agg += int(op_m["records_processed"] or 0)
+        if op_m.get("duration_secs") is not None:
+            dur_agg += float(op_m["duration_secs"])
+            dur_count += 1
+
         c = m["canary"]
         if c["status"] == "TESTED" and (c["planted"] or 0) > 0:
             canary_leaked += int(c["leaked"] or 0)
@@ -304,6 +481,8 @@ def build_aggregate_dashboard_metrics(
             "true_positives": 0,
             "false_positives": 0,
             "precision": None,
+            "recall": None,
+            "f05": None,
             "false_merges": 0,
             "records_assessed": 0,
             "scope": "AGGREGATE",
@@ -342,6 +521,33 @@ def build_aggregate_dashboard_metrics(
         "processed_at": latest_ts,
         "jobs_included": len(completed_jobs),
         "metrics": {
+            "files_protected": {
+                "status": "MEASURED" if files_ok_jobs > 0 else "NOT_MEASURED",
+                "count": files_san_agg if files_ok_jobs > 0 else None,
+                "files_total": files_tot_agg,
+                "files_quarantined": files_quar_agg,
+            },
+            "identifiers_protected": {
+                "status": "MEASURED" if id_prot_jobs > 0 else "NOT_MEASURED",
+                "detected": id_det_agg,
+                "transformed": id_trans_agg if id_prot_jobs > 0 else None,
+                "unresolved": id_unres_agg,
+                "remaining_leaks": id_leaks_agg if id_prot_jobs > 0 else None,
+            },
+            "privacy_tests": {
+                "status": "BLOCKED" if pt_blocked > 0 else ("MEASURED" if pt_exec > 0 else "NOT_TESTED"),
+                "passed": pt_passed,
+                "failed": pt_failed,
+                "not_run": pt_not_run,
+                "inconclusive": pt_inc,
+                "blocked": pt_blocked,
+                "total_executed": pt_exec,
+            },
+            "operations": {
+                "records_processed": recs_agg,
+                "duration_secs": round(dur_agg, 3) if dur_count > 0 else None,
+                "fhir_integrity": "PASS" if clin_measured_jobs > 0 else "NOT_MEASURED",
+            },
             "canary": canary_agg,
             "identity": identity_agg,
             "clinical": clinical_agg,
@@ -391,8 +597,12 @@ def get_dashboard_metrics_summary(
                 "release_decision": "NOT_MEASURED",
                 "processed_at": None,
                 "metrics": {
+                    "files_protected": {"status": "NOT_MEASURED", "count": None, "files_total": 0, "files_quarantined": 0},
+                    "identifiers_protected": {"status": "NOT_MEASURED", "detected": 0, "transformed": None, "unresolved": 0, "remaining_leaks": None},
+                    "privacy_tests": {"status": "NOT_TESTED", "passed": 0, "failed": 0, "not_run": 5, "inconclusive": 0, "blocked": 0, "total_executed": 0},
+                    "operations": {"records_processed": 0, "duration_secs": None, "fhir_integrity": "NOT_MEASURED"},
                     "canary": {"status": "NOT_TESTED", "leaked": None, "planted": 0, "files_assessed": 0, "outcome": "NOT_TESTED"},
-                    "identity": {"status": "NOT_MEASURED", "true_positives": 0, "false_positives": 0, "precision": None, "false_merges": 0, "records_assessed": 0, "scope": "JOB"},
+                    "identity": {"status": "NOT_MEASURED", "true_positives": 0, "false_positives": 0, "precision": None, "recall": None, "f05": None, "false_merges": 0, "records_assessed": 0, "scope": "JOB"},
                     "clinical": {"status": "NOT_MEASURED", "expected": 0, "preserved": 0, "missing": 0, "modified": 0, "preservation_percentage": None},
                     "execution": get_runtime_execution_compliance(),
                 },

@@ -64,11 +64,16 @@ export default function ProtectDataPage() {
   const [runningAttack, setRunningAttack] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [confirmMappingOpen, setConfirmMappingOpen] = useState(false);
+  const [judgeMode, setJudgeMode] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    api
+      .authConfig()
+      .then((c) => setJudgeMode(Boolean(c.judge_mode)))
+      .catch(() => {});
     api
       .organisations()
       .then((list) => {
@@ -99,8 +104,10 @@ export default function ProtectDataPage() {
     if (!job) return;
     const terminal = ["COMPLETED", "COMPLETED_WITH_WARNINGS", "QUARANTINED", "BLOCKED", "FAILED", "CANCELLED"];
     if (terminal.includes(job.status)) {
-      refreshResults(job.id);
-      return;
+      const t = setTimeout(() => {
+        void refreshResults(job.id);
+      }, 0);
+      return () => clearTimeout(t);
     }
     const timer = setInterval(async () => {
       try {
@@ -877,12 +884,16 @@ export default function ProtectDataPage() {
 
             <button
               type="button"
-              disabled={!releaseReady}
+              disabled={!releaseReady || judgeMode}
               onClick={() => setConfirmMappingOpen(true)}
               className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white border border-[#DADADA] text-[#090909] text-[13px] font-medium hover:bg-[#F4F4F2] disabled:opacity-50"
             >
               <Lock size={15} />
-              <span>Download patient mapping (Restricted)</span>
+              <span>
+                {judgeMode
+                  ? "Patient mapping disabled (Local Evaluation Mode)"
+                  : "Download patient mapping (Restricted)"}
+              </span>
             </button>
           </div>
 

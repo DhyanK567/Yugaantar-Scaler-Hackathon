@@ -201,21 +201,32 @@ pnpm build
 cd ..
 ```
 
-### 2. Run Offline-First Local Application (Recommended)
+### 2. Run MediLocker in Offline Judge Mode (No Login / No Internet)
 ```powershell
-.\.venv\Scripts\python.exe launcher\medilocker_launcher.py
-# Or double-click Start-MediLocker.bat
-```
-Opens `http://127.0.0.1:3001/login` with **Continue in Offline Demo Mode** active.
+# Windows (PowerShell)
+.\scripts\run_judge_mode.ps1
 
-### 3. Run in Development Mode
+# Or manually:
+$env:MEDILOCKER_MODE = "judge"
+$env:MEDILOCKER_ENV = "development"
+$env:RAKSHA_SECRET = "practice"
+.\.venv\Scripts\uvicorn.exe backend.main:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python.exe -m http.server 3001 --bind 127.0.0.1 --directory frontend\out
+```
+```bash
+# Linux / macOS
+bash scripts/run_judge_mode.sh
+```
+Open `http://127.0.0.1:3001/dashboard` — opens directly in **LOCAL EVALUATION MODE** without login, OTP, or Google OAuth. Restricted `records.jsonl` mapping downloads remain disabled in Judge Mode.
+
+### 3. Run MediLocker in Authenticated Organisation Mode
 ```powershell
-# Terminal 1 (Backend)
-.\.venv\Scripts\uvicorn.exe backend.main:app --host 127.0.0.1 --port 8000 --reload
-
-# Terminal 2 (Frontend)
-cd frontend; pnpm dev -p 3001
+$env:MEDILOCKER_MODE = "organisation"
+$env:MEDILOCKER_ENV = "production"   # Enforces authentication & blocks Judge Mode bypass
+.\.venv\Scripts\uvicorn.exe backend.main:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python.exe -m http.server 3001 --bind 127.0.0.1 --directory frontend\out
 ```
+Open `http://127.0.0.1:3001/login` — enforces session cookies, RBAC roles, organisation isolation, and audit logging.
 
 ### 4. Run Independent CLI Evaluator (No Web Server)
 ```powershell
