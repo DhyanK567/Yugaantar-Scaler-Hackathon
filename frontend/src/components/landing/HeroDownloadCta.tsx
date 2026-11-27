@@ -45,8 +45,10 @@ function WindowsLogo() {
 }
 
 export function HeroDownloadCta() {
-  const androidUrl = process.env.NEXT_PUBLIC_ANDROID_DOWNLOAD_URL;
-  const windowsUrl = process.env.NEXT_PUBLIC_WINDOWS_DOWNLOAD_URL;
+  const androidUrl =
+    process.env.NEXT_PUBLIC_ANDROID_DOWNLOAD_URL || "/downloads/MediLocker-release.apk";
+  const windowsUrl =
+    process.env.NEXT_PUBLIC_WINDOWS_DOWNLOAD_URL || "/downloads/MediLocker-Setup-x64.exe";
   const hasAndroid = isSafeDownloadUrl(androidUrl);
   const hasWindows = isSafeDownloadUrl(windowsUrl);
 
