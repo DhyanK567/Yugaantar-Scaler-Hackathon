@@ -10,6 +10,7 @@ import json
 import re
 from pathlib import Path
 
+from .crypto import pseudonymous_filename_token
 from .names import CorpusNameIndex, redact_names_in_text
 from .patterns import (
     RX_AADHAAR,
@@ -173,32 +174,84 @@ def sanitize_free_text(
     return work, total
 
 
-def sanitize_filename(rel_posix: str, name_index: CorpusNameIndex, raw_sha256: str) -> str:
-    """Replace PII in a relative file path (phones, MRNs, patient names) deterministically."""
-    p = Path(rel_posix)
-    parts = list(p.parts)
-    changed = False
+_SAFE_FILENAME_PREFIXES = frozenset({
+    "discharge", "summary", "lab", "labs", "report", "note", "notes", "visit",
+    "rx", "prescription", "fhir", "bundle", "records", "record", "clinical",
+    "patient", "patients", "hospital", "hosp", "encounter", "vitals", "doc",
+    "admission", "referral", "diag", "diagnosis", "medication", "meds",
+})
+_UNSAFE_PATH_CHARS = re.compile(r"[^A-Za-z0-9._\-]")
+
+
+def sanitize_filename(
+    rel_posix: str,
+    name_index: CorpusNameIndex,
+    raw_sha256: str,
+    secret: bytes = b"",
+) -> str:
+    """Replace PII and unsafe path components in a relative path deterministically.
+
+    Uses domain-separated HMAC-SHA256 tokens derived from ``secret`` so output
+    filenames are deterministic for identical (input, secret), change when
+    ``RAKSHA_SECRET`` changes, prevent path traversal, and never expose raw PII.
+    """
+    normalized = (rel_posix or "").replace("\x00", "").replace("\\", "/")
+    raw_parts = [seg for seg in normalized.split("/") if seg and seg not in (".", "..")]
+    if raw_parts and ":" in raw_parts[0]:
+        raw_parts[0] = raw_parts[0].split(":", 1)[-1]
+        raw_parts = [seg for seg in raw_parts if seg and seg not in (".", "..")]
+    if not raw_parts:
+        tok = pseudonymous_filename_token("empty_fallback", raw_sha256, secret, length=12)
+        return f"doc_{tok}.txt"
+
+    changed = (normalized != rel_posix) or (".." in (rel_posix or "")) or normalized.startswith("/")
     new_parts: list[str] = []
-    for idx, part in enumerate(parts):
-        is_last = idx == len(parts) - 1
+    for idx, part in enumerate(raw_parts):
+        is_last = idx == len(raw_parts) - 1
         stem = Path(part).stem if is_last else part
-        ext = Path(part).suffix if is_last else ""
-        cleaned, n = sanitize_free_text(stem, name_index, None, b"", decode_b64=False)
-        # Also catch underscore-separated tokens (preserving '-' for MRNs like IP-26-00130)
-        stem_spaces = stem.replace("_", " ")
-        cleaned_sp, n2 = sanitize_free_text(stem_spaces, name_index, None, b"", decode_b64=False)
-        if n > 0 or n2 > 0 or cleaned != stem or cleaned_sp != stem_spaces:
+        raw_ext = Path(part).suffix if is_last else ""
+        ext = raw_ext.lower() if (raw_ext and re.fullmatch(r"\.[A-Za-z0-9]{1,10}", raw_ext)) else ""
+
+        # Check multiple tokenizations (underscore, hyphen, dot-separated, and raw)
+        variants = (
+            stem,
+            stem.replace("_", " "),
+            stem.replace("-", " "),
+            re.sub(r"[_\-.]+", " ", stem),
+        )
+        pii_found = False
+        for variant in variants:
+            cleaned, n = sanitize_free_text(
+                variant,
+                name_index,
+                None,
+                b"",
+                decode_b64=False,
+                local_first_names=name_index.first_names,
+            )
+            if n > 0 or cleaned != variant:
+                pii_found = True
+                break
+
+        has_non_ascii = any(ord(ch) > 127 for ch in stem)
+        has_unsafe_chars = bool(_UNSAFE_PATH_CHARS.search(stem))
+        # Also flag suspiciously long or multi-digit numeric tokens (>=6 digits) in filenames
+        has_long_digits = bool(re.search(r"\d{6,}", stem))
+
+        if pii_found or has_non_ascii or has_unsafe_chars or has_long_digits:
             changed = True
-            # Replace with safe deterministic token
-            prefix = "file" if not is_last else stem.split("_")[0].lower()
-            if not prefix.isalpha() or len(prefix) > 12 or prefix in name_index.first_names:
-                prefix = "doc"
-            new_part = f"{prefix}_{raw_sha256[:8]}{ext}" if is_last else f"dir_{raw_sha256[:8]}"
-            new_parts.append(new_part)
+            token = pseudonymous_filename_token(f"{normalized}#{idx}", raw_sha256, secret, length=12)
+            if is_last:
+                first_tok = re.split(r"[_\-\s.]+", stem.lower())[0] if stem else ""
+                prefix = first_tok if first_tok in _SAFE_FILENAME_PREFIXES else "doc"
+                new_parts.append(f"{prefix}_{token}{ext}")
+            else:
+                new_parts.append(f"dir_{token}")
         else:
-            new_parts.append(part)
+            new_parts.append(f"{stem}{ext}" if is_last else stem)
+
     if not changed:
-        return rel_posix
+        return "/".join(new_parts)
     return "/".join(new_parts)
 
 

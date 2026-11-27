@@ -8,6 +8,7 @@ import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { ReleaseReadinessPanel } from "@/components/dashboard/ReleaseReadinessPanel";
 import { GettingStartedPanel } from "@/components/dashboard/GettingStartedPanel";
 import { MetricGrid } from "@/components/dashboard/MetricGrid";
+import { PrivacyPerformanceOverview } from "@/components/dashboard/PrivacyPerformanceOverview";
 import { ProcessingWorkflow } from "@/components/dashboard/ProcessingWorkflow";
 import { RecentJobsPanel } from "@/components/dashboard/RecentJobsPanel";
 import { AuditEventsPanel } from "@/components/dashboard/AuditEventsPanel";
@@ -17,12 +18,15 @@ export default function DashboardPage() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [error, setError] = useState("");
   const [unauth, setUnauth] = useState(false);
 
   const loadDashboard = useCallback(async (isRefresh = false) => {
-    if (isRefresh) setRefreshing(true);
-    else setLoading(true);
+    if (isRefresh) {
+      setRefreshing(true);
+      setRefreshKey((k) => k + 1);
+    } else setLoading(true);
     setError("");
     try {
       const [dash, me] = await Promise.all([api.dashboard(), api.me()]);
@@ -108,11 +112,70 @@ export default function DashboardPage() {
             {/* C. PRIMARY GET-STARTED / OPERATIONAL ACTION */}
             <GettingStartedPanel hasProcessedData={hasProcessedData} />
 
-            {/* D. PRIVACY PERFORMANCE METRICS (3x2 grid) */}
-            <MetricGrid metrics={data.metrics} />
+            {/* D0. DATASET-AWARE PRIVACY PERFORMANCE OVERVIEW */}
+            <PrivacyPerformanceOverview externalRefreshKey={refreshKey} />
+
+            {/* D. FOUR KEY METRICS */}
+            <section aria-label="Four Key Metrics">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <Link href="/dashboard/datasets" className="bg-white border border-[#DADADA] rounded-2xl p-5 hover:border-[#090909] transition-colors">
+                  <div className="text-[12px] font-semibold text-[#666666]">Files protected</div>
+                  <div className="font-serif-display text-[28px] text-[#090909] mt-1">{data.metrics.files_processed.display}</div>
+                  <div className="text-[11.5px] text-[#888888] mt-1">{data.metrics.files_processed.description}</div>
+                </Link>
+                <Link href="/dashboard/privacy-intelligence" className="bg-white border border-[#DADADA] rounded-2xl p-5 hover:border-[#090909] transition-colors">
+                  <div className="text-[12px] font-semibold text-[#666666]">Patient identities protected</div>
+                  <div className="font-serif-display text-[28px] text-[#090909] mt-1">{data.metrics.pii_detected.display}</div>
+                  <div className="text-[11.5px] text-[#888888] mt-1">{data.metrics.pii_detected.description}</div>
+                </Link>
+                <Link href="/dashboard/clinical-integrity" className="bg-white border border-[#DADADA] rounded-2xl p-5 hover:border-[#090909] transition-colors">
+                  <div className="text-[12px] font-semibold text-[#666666]">Clinical values preserved</div>
+                  <div className="font-serif-display text-[28px] text-[#090909] mt-1">{data.metrics.clinical_preserved.display}</div>
+                  <div className="text-[11.5px] text-[#888888] mt-1">{data.metrics.clinical_preserved.description}</div>
+                </Link>
+                <Link href="/dashboard/reports" className="bg-white border border-[#DADADA] rounded-2xl p-5 hover:border-[#090909] transition-colors">
+                  <div className="text-[12px] font-semibold text-[#666666]">Privacy assessments</div>
+                  <div className="font-serif-display text-[28px] text-[#090909] mt-1">{data.privacy_health.overall_readiness}</div>
+                  <div className="text-[11.5px] text-[#888888] mt-1">Canary leaks: {data.metrics.canary_leaks.display}</div>
+                </Link>
+              </div>
+            </section>
 
             {/* E. PROCESSING WORKFLOW (6-stage visual pipeline) */}
             <ProcessingWorkflow latestJob={data.recent_jobs[0] ?? null} />
+
+            {/* E2. ATTENTION REQUIRED (only shown when real items exist) */}
+            {data.recent_jobs.some(
+              (j) =>
+                (j.files_quarantined ?? 0) > 0 ||
+                ["BLOCKED", "FAILED", "QUARANTINED"].includes(j.status) ||
+                ["QUEUED", "PROCESSING", "VALIDATING"].includes(j.status)
+            ) && (
+              <section className="bg-white border border-[#DADADA] rounded-2xl p-5 space-y-2">
+                <h2 className="text-[14.5px] font-semibold text-[#090909]">Attention Required</h2>
+                <div className="divide-y divide-[#E5E5E5]">
+                  {data.recent_jobs
+                    .filter(
+                      (j) =>
+                        (j.files_quarantined ?? 0) > 0 ||
+                        ["BLOCKED", "FAILED", "QUARANTINED"].includes(j.status) ||
+                        ["QUEUED", "PROCESSING", "VALIDATING"].includes(j.status)
+                    )
+                    .slice(0, 5)
+                    .map((j) => (
+                      <div key={j.id} className="py-2.5 flex items-center justify-between text-[12.5px]">
+                        <span className="text-[#090909] font-medium">
+                          {j.dataset_name || j.id} — {j.status}
+                          {(j.files_quarantined ?? 0) > 0 ? ` (${j.files_quarantined} quarantined)` : ""}
+                        </span>
+                        <Link href="/dashboard/reports" className="text-[#090909] underline">
+                          Inspect →
+                        </Link>
+                      </div>
+                    ))}
+                </div>
+              </section>
+            )}
 
             {/* F. RECENT JOBS (7 cols) & G. AUDIT EVENTS (5 cols) */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">

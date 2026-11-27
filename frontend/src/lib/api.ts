@@ -160,6 +160,8 @@ export interface AuthUser {
 }
 
 export interface AuthConfig {
+  mode?: "judge" | "organisation";
+  judge_mode?: boolean;
   offline_mode?: boolean;
   smtp_enabled: boolean;
   dev_email_login_enabled?: boolean;
@@ -332,6 +334,95 @@ export interface PrivacyIntelligence {
   last_updated?: number | null;
 }
 
+export interface ExecutionCompliance {
+  mode: "OFFLINE" | "ONLINE" | "UNKNOWN";
+  device: "CPU" | "GPU" | "UNKNOWN";
+  llm_dependency: "NONE" | "DETECTED" | "UNKNOWN";
+  network_calls: number | null;
+  verification_status: "VERIFIED" | "FAILED" | "NOT_VERIFIED";
+  scope: string;
+  checks_passed?: number;
+  checks_total?: number;
+}
+
+export interface DashboardMetricsSummary {
+  scope: "JOB" | "AGGREGATE" | "EMPTY";
+  job_id: string | null;
+  dataset_id: string | null;
+  dataset_name?: string;
+  organisation_id?: string | null;
+  job_status: string;
+  release_decision?: string;
+  processed_at: number | null;
+  jobs_included?: number;
+  metrics: {
+    files_protected?: {
+      status: "MEASURED" | "NOT_MEASURED";
+      count: number | null;
+      files_total: number;
+      files_quarantined: number;
+    };
+    identifiers_protected?: {
+      status: "MEASURED" | "NOT_MEASURED";
+      detected: number;
+      transformed: number | null;
+      unresolved: number;
+      remaining_leaks: number | null;
+    };
+    privacy_tests?: {
+      status: "MEASURED" | "NOT_TESTED" | "BLOCKED";
+      passed: number;
+      failed: number;
+      not_run: number;
+      inconclusive: number;
+      blocked: number;
+      total_executed: number;
+    };
+    operations?: {
+      records_processed: number;
+      duration_secs: number | null;
+      fhir_integrity: string;
+    };
+    canary: {
+      status: "TESTED" | "NOT_TESTED" | "FAILED";
+      leaked: number | null;
+      planted: number;
+      files_assessed: number;
+      outcome: "PROTECTED" | "LEAKAGE_DETECTED" | "NOT_TESTED";
+      jobs_tested?: number;
+    };
+    identity: {
+      status: "MEASURED" | "NOT_MEASURED";
+      true_positives: number;
+      false_positives: number;
+      precision: number | null;
+      recall?: number | null;
+      f05?: number | null;
+      false_merges: number;
+      records_assessed: number;
+      scope: string;
+    };
+    clinical: {
+      status: "MEASURED" | "NOT_MEASURED" | "FAILED";
+      expected: number;
+      preserved: number;
+      missing: number;
+      modified: number;
+      preservation_percentage: number | null;
+      jobs_measured?: number;
+    };
+    execution: ExecutionCompliance;
+  };
+  available_jobs?: {
+    id: string;
+    dataset_id?: string | null;
+    dataset_name?: string;
+    status: string;
+    release_decision?: string;
+    completed_at?: number | null;
+  }[];
+}
+
 export interface QuarantineItem {
   quarantine_id: string;
   opaque_ref: string;
@@ -389,6 +480,7 @@ export interface ClinicalReport {
   lab_integrity: number | null;
   vital_integrity: number | null;
   fhir_integrity: string;
+  details_json?: string;
   created_at: number;
 }
 
@@ -489,8 +581,13 @@ export const api = {
     }),
   logout: () => request<{ status: string }>("/api/auth/logout", { method: "POST" }),
 
-  // Dashboard
+  // Dashboard & System Compliance
   dashboard: () => request<DashboardOverview>("/api/dashboard/overview"),
+  dashboardMetricsSummary: (scope = "latest") =>
+    request<DashboardMetricsSummary>(`/api/dashboard/metrics-summary?scope=${encodeURIComponent(scope)}`),
+  jobDashboardMetrics: (jobId: string) =>
+    request<DashboardMetricsSummary>(`/api/jobs/${encodeURIComponent(jobId)}/dashboard-metrics`),
+  systemCompliance: () => request<ExecutionCompliance>("/api/system/compliance"),
 
   // Organisations
   organisations: () => request<Organisation[]>("/api/organisations"),
@@ -621,4 +718,33 @@ export const api = {
       version: string;
     }>("/api/system/diagnostics"),
   briefPdfUrl: () => `${API_BASE}/api/reports/brief-pdf`,
+  privacyReportPdfUrl: (jobId: string) => `${API_BASE}/api/jobs/${jobId}/privacy-report.pdf`,
+  jobResults: (jobId: string) =>
+    request<{
+      job: JobRecord;
+      privacy_assessment: PrivacyAssessment | null;
+      clinical_report: ClinicalReport | null;
+      identity_cluster: Record<string, unknown> | null;
+      passport: Passport | null;
+    }>(`/api/jobs/${jobId}/results`),
+  jobReportJsonUrl: (jobId: string) => `${API_BASE}/api/jobs/${jobId}/report.json`,
+  jobMappingUrl: (jobId: string) => `${API_BASE}/api/jobs/${jobId}/mapping`,
+  jobBundleUrl: (jobId: string, includeMapping = false) =>
+    `${API_BASE}/api/jobs/${jobId}/download?include_mapping=${includeMapping ? "true" : "false"}`,
+  downloadPrivacyReportPdf: async (jobId: string): Promise<Blob> => {
+    const res = await fetch(`${API_BASE}/api/jobs/${jobId}/privacy-report.pdf`, {
+      credentials: "include",
+    });
+    if (!res.ok) {
+      let msg = `Report generation failed (${res.status})`;
+      try {
+        const errBody = await res.json();
+        msg = errBody.detail || errBody.message || msg;
+      } catch {
+        // ignore parse error
+      }
+      throw new ApiError(res.status, msg);
+    }
+    return await res.blob();
+  },
 };

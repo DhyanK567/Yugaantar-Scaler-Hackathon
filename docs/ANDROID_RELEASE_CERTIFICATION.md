@@ -11,7 +11,7 @@
 | **APK Path (Root)** | `MediLocker-release.apk` |
 | **APK Path (Dist)** | `dist/android/MediLocker-Android-Release.apk` |
 | **SHA-256 Checksum File** | `MediLocker-release.apk.sha256` |
-| **SHA-256 Digest** | `209B6C63115B2CFC3379A78CBC95A8351A449036C7A4E32C28F2E0BFDC1385C1` |
+| **SHA-256 Digest** | `7EBCB287DCC05BA25E945B9DA8575B2823E6B5E8F1A0EB2F527D5C53E0A2A4A2` |
 | **APK Size** | `35,655,500` bytes (~34.00 MiB) |
 | **Package ID** | `org.medilocker.privacy` |
 | **Version** | `1.0.0-m20` (`versionCode 1`) |

@@ -50,6 +50,10 @@ if _ENV_FILE.exists():
             os.environ[_k] = _v
 
 from .audit import record_audit_event
+from .dashboard_metrics import (
+    get_dashboard_metrics_summary,
+    get_runtime_execution_compliance,
+)
 from .auth import (
     ROLE_AUDITOR,
     ROLE_ORG_ADMIN,
@@ -61,8 +65,10 @@ from .auth import (
     dev_email_login,
     get_google_config,
     get_smtp_config,
+    get_operating_mode,
     handle_google_callback,
     is_dev_email_login_enabled,
+    is_judge_mode,
     is_offline_mode_enabled,
     offline_demo_login,
     request_email_otp,
@@ -224,6 +230,8 @@ def get_auth_config() -> Dict[str, Any]:
     smtp = get_smtp_config()
     google = get_google_config()
     return {
+        "mode": get_operating_mode(),
+        "judge_mode": is_judge_mode(),
         "offline_mode": is_offline_mode_enabled(),
         "smtp_enabled": smtp["configured"],
         "dev_email_login_enabled": is_dev_email_login_enabled(),
@@ -667,6 +675,42 @@ def get_dashboard_recent_jobs(user: Dict[str, Any] = Depends(require_user)) -> L
 @app.get("/api/dashboard/audit-events")
 def get_dashboard_audit_events(user: Dict[str, Any] = Depends(require_user)) -> List[Dict[str, Any]]:
     return _compute_dashboard_payload(user)["audit_events"]
+
+
+@app.get("/api/system/compliance")
+def get_system_compliance() -> Dict[str, Any]:
+    """Publicly safe repository/runtime execution compliance check (zero patient or org data)."""
+    return get_runtime_execution_compliance()
+
+
+@app.get("/api/dashboard/metrics-summary")
+def get_dashboard_metrics_summary_endpoint(
+    scope: str = Query(default="latest"),
+    user: Dict[str, Any] = Depends(require_user),
+) -> Dict[str, Any]:
+    org_ids = _authorised_org_ids(user)
+    with get_db() as conn:
+        try:
+            return get_dashboard_metrics_summary(conn, org_ids, scope=scope)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get("/api/jobs/{job_id}/dashboard-metrics")
+def get_job_dashboard_metrics_endpoint(
+    job_id: str,
+    user: Dict[str, Any] = Depends(require_user),
+) -> Dict[str, Any]:
+    org_ids = _authorised_org_ids(user)
+    with get_db() as conn:
+        try:
+            return get_dashboard_metrics_summary(conn, org_ids, scope=job_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
 
 
 # ==============================================================================
@@ -1132,10 +1176,27 @@ def get_job_results(job_id: str, user: Dict[str, Any] = Depends(require_user)) -
 
 
 @app.get("/api/jobs/{job_id}/download")
-def download_job_outputs(job_id: str, request: Request, user: Dict[str, Any] = Depends(require_user)):
+def download_job_outputs(
+    job_id: str,
+    request: Request,
+    include_mapping: bool = False,
+    user: Dict[str, Any] = Depends(require_user),
+):
     job = get_job_detail(job_id, user)
     if job.get("organisation_id"):
-        require_org_access(user, job["organisation_id"])
+        if include_mapping:
+            if is_judge_mode():
+                raise HTTPException(
+                    status_code=403,
+                    detail="Restricted patient mapping file download is disabled in Local Evaluation Mode.",
+                )
+            require_org_access(
+                user,
+                job["organisation_id"],
+                [ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER],
+            )
+        else:
+            require_org_access(user, job["organisation_id"])
     if job.get("release_decision") not in ("APPROVED", "APPROVED_WITH_WARNINGS") or job.get("status") not in ("COMPLETED", "COMPLETED_WITH_WARNINGS"):
         raise HTTPException(
             status_code=403,
@@ -1154,7 +1215,10 @@ def download_job_outputs(job_id: str, request: Request, user: Dict[str, Any] = D
                 arcname = file_path.relative_to(sanitized_dir).as_posix()
                 zf.write(file_path, f"sanitized/{arcname}")
         zf.write(job_output / "report.json", "report.json")
-        zf.write(job_output / "records.jsonl", "records.jsonl")
+        if (job_output / "privacy_passport.json").is_file():
+            zf.write(job_output / "privacy_passport.json", "privacy_passport.json")
+        if include_mapping:
+            zf.write(job_output / "records.jsonl", "records.jsonl")
 
     record_audit_event(
         action="BUNDLE_DOWNLOADED",
@@ -1165,7 +1229,7 @@ def download_job_outputs(job_id: str, request: Request, user: Dict[str, Any] = D
         actor_email=user["email"],
         actor_role=user.get("active_role"),
         organisation_id=job.get("organisation_id"),
-        details=f"Downloaded approved release bundle ({job.get('release_decision')})",
+        details=f"Downloaded release bundle ({job.get('release_decision')}, include_mapping={include_mapping})",
         ip_address=_client_ip(request),
     )
 
@@ -1174,6 +1238,187 @@ def download_job_outputs(job_id: str, request: Request, user: Dict[str, Any] = D
         zip_buffer,
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename=MediLocker_Protected_{job_id}.zip"},
+    )
+
+
+@app.get("/api/jobs/{job_id}/report.json")
+def download_job_report_json(
+    job_id: str, request: Request, user: Dict[str, Any] = Depends(require_user)
+):
+    job = get_job_detail(job_id, user)
+    if job.get("organisation_id"):
+        require_org_access(user, job["organisation_id"])
+    report_path = JOBS_DIR / job_id / "output" / "report.json"
+    if not report_path.is_file():
+        raise HTTPException(status_code=404, detail="Processing report.json not found for this job")
+    return StreamingResponse(
+        io.BytesIO(report_path.read_bytes()),
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename=MediLocker_Report_{job_id}.json"},
+    )
+
+
+@app.get("/api/jobs/{job_id}/mapping")
+def download_job_mapping_jsonl(
+    job_id: str, request: Request, user: Dict[str, Any] = Depends(require_user)
+):
+    """Restricted download of sensitive records.jsonl patient mapping file."""
+    if is_judge_mode():
+        raise HTTPException(
+            status_code=403,
+            detail="Restricted patient mapping file download is disabled in Local Evaluation Mode.",
+        )
+    job = get_job_detail(job_id, user)
+    if job.get("organisation_id"):
+        require_org_access(
+            user,
+            job["organisation_id"],
+            [ROLE_PLATFORM_ADMIN, ROLE_ORG_ADMIN, ROLE_PRIVACY_OFFICER],
+        )
+    if job.get("release_decision") not in ("APPROVED", "APPROVED_WITH_WARNINGS") or job.get("status") not in ("COMPLETED", "COMPLETED_WITH_WARNINGS"):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Mapping download blocked: job status is {job.get('status')} (decision: {job.get('release_decision')})",
+        )
+    mapping_path = JOBS_DIR / job_id / "output" / "records.jsonl"
+    if not mapping_path.is_file():
+        raise HTTPException(status_code=404, detail="Mapping file records.jsonl not found for this job")
+
+    record_audit_event(
+        action="MAPPING_DOWNLOADED",
+        resource_type="job",
+        resource_id=job_id,
+        outcome="SUCCESS",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user.get("active_role"),
+        organisation_id=job.get("organisation_id"),
+        details=f"Downloaded restricted records.jsonl mapping for job {job_id}",
+        ip_address=_client_ip(request),
+    )
+    return StreamingResponse(
+        io.BytesIO(mapping_path.read_bytes()),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": f"attachment; filename=MediLocker_Mapping_{job_id}.jsonl"},
+    )
+
+
+@app.get("/api/jobs/{job_id}/privacy-report.pdf")
+def download_job_privacy_report_pdf(
+    job_id: str, request: Request, user: Dict[str, Any] = Depends(require_user)
+):
+    from .privacy_report_pdf import generate_privacy_integrity_pdf
+
+    job = get_job_detail(job_id, user)
+    if job.get("organisation_id"):
+        require_org_access(user, job["organisation_id"])
+
+    with get_db() as conn:
+        dataset = (
+            dict(r)
+            if job.get("dataset_id")
+            and (r := conn.execute("SELECT * FROM datasets WHERE id = ?", (job["dataset_id"],)).fetchone())
+            else None
+        )
+        organisation = (
+            dict(r)
+            if job.get("organisation_id")
+            and (r := conn.execute("SELECT * FROM organisations WHERE id = ?", (job["organisation_id"],)).fetchone())
+            else None
+        )
+        privacy = (
+            dict(r)
+            if (r := conn.execute("SELECT * FROM privacy_assessments WHERE job_id = ? ORDER BY created_at DESC LIMIT 1", (job_id,)).fetchone())
+            else None
+        )
+        clinical = (
+            dict(r)
+            if (r := conn.execute("SELECT * FROM clinical_reports WHERE job_id = ? ORDER BY created_at DESC LIMIT 1", (job_id,)).fetchone())
+            else None
+        )
+        identity = (
+            dict(r)
+            if (r := conn.execute("SELECT * FROM identity_clusters WHERE job_id = ? ORDER BY created_at DESC LIMIT 1", (job_id,)).fetchone())
+            else None
+        )
+        attack_run = (
+            dict(r)
+            if (r := conn.execute("SELECT * FROM attack_runs WHERE job_id = ? ORDER BY created_at DESC LIMIT 1", (job_id,)).fetchone())
+            else None
+        )
+        passport = (
+            dict(r)
+            if (r := conn.execute("SELECT * FROM passports WHERE job_id = ? ORDER BY created_at DESC LIMIT 1", (job_id,)).fetchone())
+            else None
+        )
+
+    job_out = JOBS_DIR / job_id / "output"
+    engine_report = None
+    report_json_path = job_out / "report.json"
+    if report_json_path.is_file():
+        try:
+            engine_report = json.loads(report_json_path.read_text(encoding="utf-8"))
+        except Exception:
+            engine_report = None
+
+    passport_verification = None
+    disk_passport = job_out / "privacy_passport.json"
+    if passport and disk_passport.is_file():
+        try:
+            import sys as _sys
+            if str(STARTER_DIR) not in _sys.path:
+                _sys.path.insert(0, str(STARTER_DIR))
+            from verify_passport import verify_passport_bundle  # type: ignore
+
+            manifest_path = job_out / "dataset_manifest.json"
+            vres = verify_passport_bundle(
+                passport_path=disk_passport,
+                output_dir=job_out,
+                manifest_path=manifest_path if manifest_path.is_file() else None,
+            )
+            payload_obj = json.loads(passport.get("passport_json") or "{}")
+            disk_root = (
+                (payload_obj.get("dataset_provenance") or {}).get("output_dataset_root_hash")
+                or passport.get("manifest_hash")
+            )
+            integrity_ok = bool(vres.get("valid")) and (disk_root == passport.get("manifest_hash"))
+            passport_verification = {
+                "integrity_valid": integrity_ok,
+                "verified_at": passport.get("verified_at") or time.time(),
+            }
+        except Exception:
+            passport_verification = {"integrity_valid": False, "verified_at": None}
+
+    pdf_bytes = generate_privacy_integrity_pdf(
+        job=job,
+        dataset=dataset,
+        organisation=organisation,
+        privacy=privacy,
+        clinical=clinical,
+        identity=identity,
+        attack_run=attack_run,
+        passport=passport,
+        passport_verification=passport_verification,
+        engine_report=engine_report,
+    )
+
+    record_audit_event(
+        action="PRIVACY_REPORT_DOWNLOADED",
+        resource_type="job",
+        resource_id=job_id,
+        outcome="SUCCESS",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user.get("active_role"),
+        organisation_id=job.get("organisation_id"),
+        details=f"Generated Privacy & Integrity PDF report for job {job_id}",
+        ip_address=_client_ip(request),
+    )
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=MediLocker_Privacy_Integrity_Report_{job_id}.pdf"},
     )
 
 
