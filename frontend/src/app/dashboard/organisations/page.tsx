@@ -23,7 +23,10 @@ export default function OrganisationsPage() {
   }
 
   useEffect(() => {
-    load();
+    const id = setTimeout(() => {
+      load();
+    }, 0);
+    return () => clearTimeout(id);
   }, []);
 
   return (

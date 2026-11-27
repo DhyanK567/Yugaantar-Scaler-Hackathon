@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.MediLocker" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="android:statusBarColor">#090909</item>
+        <item name="android:navigationBarColor">#FFFFFF</item>
+        <item name="android:windowBackground">#FFFFFF</item>
+    </style>
+</resources>

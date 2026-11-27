@@ -34,7 +34,10 @@ export default function PrivacyPassportsPage() {
   }, [selectedQuarantine]);
 
   useEffect(() => {
-    load();
+    const id = setTimeout(() => {
+      void load();
+    }, 0);
+    return () => clearTimeout(id);
   }, [load]);
 
   async function handleVerify(id: string) {

@@ -1,0 +1,4 @@
+# GuptKavach Policy Configuration
+date_shift_max_days: 180
+min_group_size: 5
+age_band_width: 5
