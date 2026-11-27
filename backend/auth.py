@@ -195,9 +195,65 @@ def send_otp_email(to_email: str, otp_code: str, expiry_minutes: int = 5) -> Non
             server.send_message(msg)
 
 
+def get_operating_mode() -> str:
+    """Return validated operating mode: 'judge' or 'organisation'.
+
+    Production environments (MEDILOCKER_ENV=production) always fail-closed to 'organisation'.
+    """
+    env = os.environ.get("MEDILOCKER_ENV", "development").strip().lower()
+    if env == "production":
+        return "organisation"
+    raw = os.environ.get("MEDILOCKER_MODE", "organisation").strip().lower()
+    if raw == "judge":
+        return "judge"
+    if raw in ("organisation", "organization", ""):
+        return "organisation"
+    return "organisation"
+
+
+def is_judge_mode() -> bool:
+    """Return True only when explicitly configured in safe local Judge Mode."""
+    return get_operating_mode() == "judge"
+
+
 def is_offline_mode_enabled() -> bool:
     """Return True when explicitly launched in offline-first local mode."""
-    return os.environ.get("MEDILOCKER_OFFLINE_MODE", "false").lower() == "true"
+    return is_judge_mode() or os.environ.get("MEDILOCKER_OFFLINE_MODE", "false").lower() == "true"
+
+
+def _get_or_create_judge_user_context() -> Dict[str, Any]:
+    """Return deterministic synthetic evaluator context for Offline Judge Mode."""
+    judge_org_id = "org-judge-eval"
+    judge_uid = "usr-judge-evaluator"
+    judge_email = "judge@local.medilocker"
+    now = time.time()
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO organisations (id, name, org_type, region, status, records_contributed, joined_at)
+            VALUES (?, 'Local Evaluation Ward (Synthetic)', 'Evaluation Sandbox', 'Offline Local', 'Active', 0, ?)
+            """,
+            (judge_org_id, now),
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO users (id, email, full_name, status, platform_role, created_at)
+            VALUES (?, ?, 'Local Judge Evaluator', 'ACTIVE', 'USER', ?)
+            """,
+            (judge_uid, judge_email, now),
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO memberships (id, user_id, organisation_id, role, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (f"mem-{judge_uid}-{judge_org_id}", judge_uid, judge_org_id, ROLE_PRIVACY_OFFICER, now),
+        )
+    ctx = load_user_context(judge_uid, judge_org_id)
+    if ctx:
+        ctx["judge_mode"] = True
+        return ctx
+    raise HTTPException(status_code=500, detail="Failed to initialise Judge Mode evaluator context")
 
 
 def offline_demo_login(
@@ -512,6 +568,8 @@ def require_user(
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ) -> Dict[str, Any]:
     if not user:
+        if is_judge_mode():
+            return _get_or_create_judge_user_context()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",

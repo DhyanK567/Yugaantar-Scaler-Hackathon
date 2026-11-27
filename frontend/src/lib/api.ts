@@ -160,6 +160,8 @@ export interface AuthUser {
 }
 
 export interface AuthConfig {
+  mode?: "judge" | "organisation";
+  judge_mode?: boolean;
   offline_mode?: boolean;
   smtp_enabled: boolean;
   dev_email_login_enabled?: boolean;
@@ -354,6 +356,33 @@ export interface DashboardMetricsSummary {
   processed_at: number | null;
   jobs_included?: number;
   metrics: {
+    files_protected?: {
+      status: "MEASURED" | "NOT_MEASURED";
+      count: number | null;
+      files_total: number;
+      files_quarantined: number;
+    };
+    identifiers_protected?: {
+      status: "MEASURED" | "NOT_MEASURED";
+      detected: number;
+      transformed: number | null;
+      unresolved: number;
+      remaining_leaks: number | null;
+    };
+    privacy_tests?: {
+      status: "MEASURED" | "NOT_TESTED" | "BLOCKED";
+      passed: number;
+      failed: number;
+      not_run: number;
+      inconclusive: number;
+      blocked: number;
+      total_executed: number;
+    };
+    operations?: {
+      records_processed: number;
+      duration_secs: number | null;
+      fhir_integrity: string;
+    };
     canary: {
       status: "TESTED" | "NOT_TESTED" | "FAILED";
       leaked: number | null;
@@ -367,6 +396,8 @@ export interface DashboardMetricsSummary {
       true_positives: number;
       false_positives: number;
       precision: number | null;
+      recall?: number | null;
+      f05?: number | null;
       false_merges: number;
       records_assessed: number;
       scope: string;
@@ -449,6 +480,7 @@ export interface ClinicalReport {
   lab_integrity: number | null;
   vital_integrity: number | null;
   fhir_integrity: string;
+  details_json?: string;
   created_at: number;
 }
 
@@ -687,6 +719,18 @@ export const api = {
     }>("/api/system/diagnostics"),
   briefPdfUrl: () => `${API_BASE}/api/reports/brief-pdf`,
   privacyReportPdfUrl: (jobId: string) => `${API_BASE}/api/jobs/${jobId}/privacy-report.pdf`,
+  jobResults: (jobId: string) =>
+    request<{
+      job: JobRecord;
+      privacy_assessment: PrivacyAssessment | null;
+      clinical_report: ClinicalReport | null;
+      identity_cluster: Record<string, unknown> | null;
+      passport: Passport | null;
+    }>(`/api/jobs/${jobId}/results`),
+  jobReportJsonUrl: (jobId: string) => `${API_BASE}/api/jobs/${jobId}/report.json`,
+  jobMappingUrl: (jobId: string) => `${API_BASE}/api/jobs/${jobId}/mapping`,
+  jobBundleUrl: (jobId: string, includeMapping = false) =>
+    `${API_BASE}/api/jobs/${jobId}/download?include_mapping=${includeMapping ? "true" : "false"}`,
   downloadPrivacyReportPdf: async (jobId: string): Promise<Blob> => {
     const res = await fetch(`${API_BASE}/api/jobs/${jobId}/privacy-report.pdf`, {
       credentials: "include",

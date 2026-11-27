@@ -21,22 +21,30 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   X,
+  ChevronDown,
+  ChevronRight,
+  Sparkles,
+  FileCheck2,
 } from "lucide-react";
 import { api, type AuthUser } from "@/lib/api";
 
-const NAV_ITEMS = [
+const PRIMARY_NAV = [
   { num: "01", label: "Overview", href: "/dashboard", icon: LayoutDashboard },
-  { num: "02", label: "Datasets", href: "/dashboard/datasets", icon: Database },
-  { num: "03", label: "Privacy Engine", href: "/dashboard/privacy-engine", icon: Shield },
-  { num: "04", label: "Privacy Intelligence", href: "/dashboard/privacy-intelligence", icon: Brain },
-  { num: "05", label: "Attack Simulator", href: "/dashboard/attack-simulator", icon: Swords },
-  { num: "06", label: "Organisations", href: "/dashboard/organisations", icon: Building2 },
+  { num: "02", label: "Protect Data", href: "/dashboard/protect-data", icon: Sparkles },
+  { num: "03", label: "My Datasets", href: "/dashboard/datasets", icon: Database },
+  { num: "04", label: "Reports", href: "/dashboard/reports", icon: FileCheck2 },
+];
+
+const ADVANCED_NAV = [
+  { num: "05", label: "Privacy Intelligence", href: "/dashboard/privacy-intelligence", icon: Brain },
+  { num: "06", label: "Attack Simulator", href: "/dashboard/attack-simulator", icon: Swords },
   { num: "07", label: "Identity Continuity", href: "/dashboard/identity-continuity", icon: Network },
   { num: "08", label: "Clinical Integrity", href: "/dashboard/clinical-integrity", icon: HeartPulse },
   { num: "09", label: "Privacy Passports", href: "/dashboard/privacy-passports", icon: FileKey2 },
-  { num: "10", label: "Research Network", href: "/dashboard/research-network", icon: Share2 },
-  { num: "11", label: "Audit Trail", href: "/dashboard/audit", icon: FileText },
-  { num: "12", label: "Settings", href: "/dashboard/settings", icon: Settings },
+  { num: "10", label: "Organisations", href: "/dashboard/organisations", icon: Building2 },
+  { num: "11", label: "Research Network", href: "/dashboard/research-network", icon: Share2 },
+  { num: "12", label: "Audit Trail", href: "/dashboard/audit", icon: FileText },
+  { num: "13", label: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 
 interface SidebarProps {
@@ -55,6 +63,9 @@ export default function Sidebar({
   const pathname = usePathname();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [offlineMode, setOfflineMode] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(() =>
+    ADVANCED_NAV.some((item) => pathname.startsWith(item.href))
+  );
 
   useEffect(() => {
     api.me().then((res) => setUser(res.user)).catch(() => {});
@@ -145,36 +156,82 @@ export default function Sidebar({
         </div>
       )}
 
-      {/* Numbered Navigation 01..12 */}
-      <nav aria-label="Sidebar Navigation" className="flex-1 overflow-y-auto px-3 py-4 space-y-0.5">
-        {NAV_ITEMS.map((item) => {
-          const active =
-            item.href === "/dashboard"
-              ? pathname === "/dashboard"
-              : pathname.startsWith(item.href);
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              onClick={onCloseMobile}
-              title={collapsed ? `${item.num}. ${item.label}` : undefined}
-              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-colors ${
-                active
-                  ? "bg-[#E6E6E6] text-[#090909] font-semibold"
-                  : "text-[#666666] hover:bg-[#F4F4F2] hover:text-[#090909]"
-              } ${collapsed ? "justify-center px-2" : ""}`}
+      {/* Primary & Expandable Advanced Navigation */}
+      <nav aria-label="Sidebar Navigation" className="flex-1 overflow-y-auto px-3 py-4 space-y-3">
+        <div className="space-y-0.5">
+          {!collapsed && (
+            <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#888888]">
+              Workspace
+            </div>
+          )}
+          {PRIMARY_NAV.map((item) => {
+            const active =
+              item.href === "/dashboard"
+                ? pathname === "/dashboard"
+                : pathname.startsWith(item.href);
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={onCloseMobile}
+                title={collapsed ? `${item.num}. ${item.label}` : undefined}
+                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-colors ${
+                  active
+                    ? "bg-[#E6E6E6] text-[#090909] font-semibold"
+                    : "text-[#666666] hover:bg-[#F4F4F2] hover:text-[#090909]"
+                } ${collapsed ? "justify-center px-2" : ""}`}
+              >
+                {!collapsed && (
+                  <span className="text-[10.5px] font-mono text-[#888888] w-4 shrink-0">
+                    {item.num}
+                  </span>
+                )}
+                <Icon size={15} strokeWidth={active ? 2 : 1.6} className="shrink-0" />
+                {!collapsed && <span className="truncate">{item.label}</span>}
+              </Link>
+            );
+          })}
+        </div>
+
+        <div className="pt-2 border-t border-[#E5E5E5] space-y-0.5">
+          {!collapsed && (
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen((o) => !o)}
+              className="w-full px-3 py-1.5 flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.08em] text-[#888888] hover:text-[#090909]"
             >
-              {!collapsed && (
-                <span className="text-[10.5px] font-mono text-[#888888] w-4 shrink-0">
-                  {item.num}
-                </span>
-              )}
-              <Icon size={15} strokeWidth={active ? 2 : 1.6} className="shrink-0" />
-              {!collapsed && <span className="truncate">{item.label}</span>}
-            </Link>
-          );
-        })}
+              <span>Advanced Workspace</span>
+              {advancedOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+            </button>
+          )}
+          {(collapsed || advancedOpen) &&
+            ADVANCED_NAV.map((item) => {
+              const active = pathname.startsWith(item.href);
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={onCloseMobile}
+                  title={collapsed ? `${item.num}. ${item.label}` : undefined}
+                  className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-colors ${
+                    active
+                      ? "bg-[#E6E6E6] text-[#090909] font-semibold"
+                      : "text-[#666666] hover:bg-[#F4F4F2] hover:text-[#090909]"
+                  } ${collapsed ? "justify-center px-2" : ""}`}
+                >
+                  {!collapsed && (
+                    <span className="text-[10.5px] font-mono text-[#888888] w-4 shrink-0">
+                      {item.num}
+                    </span>
+                  )}
+                  <Icon size={15} strokeWidth={active ? 2 : 1.6} className="shrink-0" />
+                  {!collapsed && <span className="truncate">{item.label}</span>}
+                </Link>
+              );
+            })}
+        </div>
       </nav>
 
       {/* Bottom Identity, Offline Status & Sign Out */}

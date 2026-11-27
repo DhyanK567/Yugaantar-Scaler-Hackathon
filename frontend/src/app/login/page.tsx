@@ -16,7 +16,16 @@ export default function LoginPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api.authConfig().then(setConfig).catch(() => {});
+    api
+      .authConfig()
+      .then((c) => {
+        if (c.judge_mode) {
+          window.location.replace("/dashboard");
+          return;
+        }
+        setConfig(c);
+      })
+      .catch(() => {});
   }, []);
 
   async function handleRequestOtp(e: React.FormEvent) {

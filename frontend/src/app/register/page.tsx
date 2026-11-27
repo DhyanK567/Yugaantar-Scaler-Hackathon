@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { api } from "@/lib/api";
@@ -11,6 +11,17 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [doneMsg, setDoneMsg] = useState("");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    api
+      .authConfig()
+      .then((c) => {
+        if (c.judge_mode) {
+          window.location.replace("/dashboard");
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
